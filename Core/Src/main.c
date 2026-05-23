@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,7 +63,14 @@ TIM_HandleTypeDef htim17;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+#define PWM_PERIOD 3999
+#define DEAD_TIME_COMP 50
 
+float electrical_direction = 0.0f;
+float step_move = 0.1f;  // rad/step
+
+static inline float fast_sin(float x) { return sinf(x); }
+static inline float fast_cos(float x) { return cosf(x); }
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -90,7 +97,45 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void set_pwm(float ua, float ub, float uc)
+{
+    // クランプ
+    if (ua < 0.0f) ua = 0.0f;
+    if (ua > 1.0f) ua = 1.0f;
+    if (ub < 0.0f) ub = 0.0f;
+    if (ub > 1.0f) ub = 1.0f;
+    if (uc < 0.0f) uc = 0.0f;
+    if (uc > 1.0f) uc = 1.0f;
 
+    TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
+    TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
+    TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
+}
+
+// SVPWMオープンループ（Vd=0, Vq=voltage で回す）
+void update_openloop(float voltage)
+{
+    float vd = 0.0f;
+    float vq = voltage;
+
+    // 逆Park変換
+    float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
+    float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
+
+    // 逆Clarke変換
+    float u = va;
+    float v = -0.5f * va + 0.866f * vb;
+    float w = -0.5f * va - 0.866f * vb;
+
+    // 0〜1にシフト（センタリング）
+    float offset = 0.5f;
+    set_pwm(u + offset, v + offset, w + offset);
+
+    // 角度更新
+    electrical_direction += step_move;
+    if (electrical_direction > 2.0f * M_PI)
+        electrical_direction -= 2.0f * M_PI;
+}
 /* USER CODE END 0 */
 
 /**
@@ -138,6 +183,32 @@ int main(void)
   MX_I2C3_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
+  // WAKEピンでドライバ起動
+  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
+  HAL_Delay(100);
+
+  // PWM出力開始
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+
+  // OPAMPスタート
+  HAL_OPAMP_Start(&hopamp1);
+  HAL_OPAMP_Start(&hopamp2);
+  HAL_OPAMP_Start(&hopamp3);
+
+  // ADCキャリブレーション＆スタート
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+  HAL_ADCEx_InjectedStart(&hadc1);
+  HAL_ADCEx_InjectedStart(&hadc2);
+
+  // TIM2でコントロールループ開始（割り込み）
+  HAL_TIM_Base_Start_IT(&htim2);
 
   /* USER CODE END 2 */
 
@@ -991,7 +1062,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM2)
+    {
+        // まずは小さいvoltageで動作確認（0.05〜0.2程度）
+        update_openloop(0.1f);
+    }
+}
 /* USER CODE END 4 */
 
 /**
