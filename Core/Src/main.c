@@ -67,7 +67,7 @@ UART_HandleTypeDef huart1;
 #define DEAD_TIME_COMP 50
 
 float electrical_direction = 0.0f;
-float step_move = 0.1f;  // rad/step
+float step_move = 0.02f;  // rad/step
 
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
