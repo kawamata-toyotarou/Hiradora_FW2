@@ -18,10 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32g431xx.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,12 +67,23 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 #define PWM_PERIOD 3999
 #define DEAD_TIME_COMP 50
+static float electrical_direction = 0.0f;
+static float step_move = 0.0f;      // rad/ISR
+static float amp = 0.02f;           // 0.00〜0.30くらいで調整
 
-float electrical_direction = 0.0f;
-float step_move = 0.02f;  // rad/step
+static inline float clamp01(float x){
+    if (x < 0.0f) return 0.0f;
+    if (x > 1.0f) return 1.0f;
+    return x;
+}
 
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
+
+static void uart_print(const char *s)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 100);
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -97,44 +110,86 @@ static void MX_TIM8_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// void set_pwm(float ua, float ub, float uc)
+// {
+//     // クランプ
+//     if (ua < 0.0f) ua = 0.0f;
+//     if (ua > 1.0f) ua = 1.0f;
+//     if (ub < 0.0f) ub = 0.0f;
+//     if (ub > 1.0f) ub = 1.0f;
+//     if (uc < 0.0f) uc = 0.0f;
+//     if (uc > 1.0f) uc = 1.0f;
+
+//     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
+//     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
+//     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
+// }
+
+// SVPWMオープンループ（Vd=0, Vq=voltage で回す）
+// void update_openloop(float voltage)
+// {
+//     float vd = 0.0f;
+//     float vq = voltage;
+
+//     // 逆Park変換
+//     float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
+//     float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
+
+//     // 逆Clarke変換
+//     float u = va;
+//     float v = -0.5f * va + 0.866f * vb;
+//     float w = -0.5f * va - 0.866f * vb;
+
+//     // 0〜1にシフト（センタリング）
+//     float offset = 0.5f;
+//     set_pwm(u + offset, v + offset, w + offset);
+
+//     // 角度更新
+//     electrical_direction += step_move;
+//     if (electrical_direction > 2.0f * M_PI)
+//         electrical_direction -= 2.0f * M_PI;
+// }
 void set_pwm(float ua, float ub, float uc)
 {
-    // クランプ
-    if (ua < 0.0f) ua = 0.0f;
-    if (ua > 1.0f) ua = 1.0f;
-    if (ub < 0.0f) ub = 0.0f;
-    if (ub > 1.0f) ub = 1.0f;
-    if (uc < 0.0f) uc = 0.0f;
-    if (uc > 1.0f) uc = 1.0f;
+    ua = clamp01(ua);
+    ub = clamp01(ub);
+    uc = clamp01(uc);
 
     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
 }
 
-// SVPWMオープンループ（Vd=0, Vq=voltage で回す）
-void update_openloop(float voltage)
+void update_openloop(void)
 {
-    float vd = 0.0f;
-    float vq = voltage;
+    float a = electrical_direction;
 
-    // 逆Park変換
-    float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
-    float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
+    // 三相正弦（0.5オフセットで0〜1に）
+    float u = 0.5f + amp * sinf(a);
+    float v = 0.5f + amp * sinf(a - 2.0f*M_PI/3.0f);
+    float w = 0.5f + amp * sinf(a + 2.0f*M_PI/3.0f);
 
-    // 逆Clarke変換
-    float u = va;
-    float v = -0.5f * va + 0.866f * vb;
-    float w = -0.5f * va - 0.866f * vb;
+    set_pwm(u, v, w);
 
-    // 0〜1にシフト（センタリング）
-    float offset = 0.5f;
-    set_pwm(u + offset, v + offset, w + offset);
-
-    // 角度更新
     electrical_direction += step_move;
-    if (electrical_direction > 2.0f * M_PI)
-        electrical_direction -= 2.0f * M_PI;
+    if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
+}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    
+    if (htim->Instance == TIM2)
+    {
+        static uint32_t cnt = 0;
+        if (++cnt >= 5000) {   // 約1秒
+            cnt = 0;
+            uart_print("tick\r\n");
+        }
+        // 超ゆっくり加速（まず回るか確認）
+        if (step_move < 0.010f) step_move +=  0.000001f;  // ここで速度上がる
+        if (amp < 0.05f) amp += 0.0000002f;               // ここでトルク上がる
+
+        update_openloop();
+    }
 }
 /* USER CODE END 0 */
 
@@ -197,19 +252,22 @@ int main(void)
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 
   // OPAMPスタート
-  HAL_OPAMP_Start(&hopamp1);
-  HAL_OPAMP_Start(&hopamp2);
-  HAL_OPAMP_Start(&hopamp3);
+  // HAL_OPAMP_Start(&hopamp1);
+  // HAL_OPAMP_Start(&hopamp2);
+  // HAL_OPAMP_Start(&hopamp3);
 
   // ADCキャリブレーション＆スタート
-  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
-  HAL_ADCEx_InjectedStart(&hadc1);
-  HAL_ADCEx_InjectedStart(&hadc2);
+  // HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  // HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+  // HAL_ADCEx_InjectedStart(&hadc1);
+  // HAL_ADCEx_InjectedStart(&hadc2);
 
   // TIM2でコントロールループ開始（割り込み）
-  HAL_TIM_Base_Start_IT(&htim2);
+  HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(TIM2_IRQn);
 
+  HAL_TIM_Base_Start_IT(&htim2);
+  uart_print("boot\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -239,11 +297,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV1;
   RCC_OscInitStruct.PLL.PLLN = 20;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
@@ -331,8 +388,8 @@ static void MX_ADC1_Init(void)
   sConfigInjected.InjectedDiscontinuousConvMode = DISABLE;
   sConfigInjected.AutoInjectedConv = DISABLE;
   sConfigInjected.QueueInjectedContext = DISABLE;
-  sConfigInjected.ExternalTrigInjecConv = ADC_INJECTED_SOFTWARE_START;
-  sConfigInjected.ExternalTrigInjecConvEdge = ADC_EXTERNALTRIGINJECCONV_EDGE_NONE;
+  sConfigInjected.ExternalTrigInjecConv = ADC_EXTERNALTRIGINJEC_T1_TRGO;
+  sConfigInjected.ExternalTrigInjecConvEdge = ADC_EXTERNALTRIGINJECCONV_EDGE_RISING;
   sConfigInjected.InjecOversamplingMode = DISABLE;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {
@@ -669,6 +726,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -683,6 +741,15 @@ static void MX_TIM1_Init(void)
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 1;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -1064,14 +1131,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM2)
-    {
-        // まずは小さいvoltageで動作確認（0.05〜0.2程度）
-        update_openloop(0.1f);
-    }
-}
+// void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+// {
+//     if (htim->Instance == TIM2)
+//     {
+//         // まずは小さいvoltageで動作確認（0.05〜0.2程度）
+//         update_openloop(0.1f);
+//     }
+// }
 /* USER CODE END 4 */
 
 /**
