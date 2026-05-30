@@ -77,20 +77,20 @@ static inline float fast_cos(float x) { return cosf(x); }
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-static void MX_ADC1_Init(void);
+static void MX_TIM1_Init(void);
 static void MX_FDCAN1_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_TIM1_Init(void);
 static void MX_TIM17_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_I2C3_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM16_Init(void);
+static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_OPAMP1_Init(void);
 static void MX_OPAMP2_Init(void);
 static void MX_OPAMP3_Init(void);
-static void MX_TIM2_Init(void);
 static void MX_TIM8_Init(void);
-static void MX_TIM16_Init(void);
-static void MX_I2C3_Init(void);
-static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -168,20 +168,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_ADC1_Init();
+  MX_TIM1_Init();
   MX_FDCAN1_Init();
   MX_SPI1_Init();
-  MX_TIM1_Init();
   MX_TIM17_Init();
+  MX_USART1_UART_Init();
+  MX_I2C3_Init();
+  MX_TIM2_Init();
+  MX_TIM16_Init();
+  MX_ADC1_Init();
   MX_ADC2_Init();
   MX_OPAMP1_Init();
   MX_OPAMP2_Init();
   MX_OPAMP3_Init();
-  MX_TIM2_Init();
   MX_TIM8_Init();
-  MX_TIM16_Init();
-  MX_I2C3_Init();
-  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   // WAKEピンでドライバ起動
@@ -217,7 +217,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-  
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -331,8 +331,8 @@ static void MX_ADC1_Init(void)
   sConfigInjected.InjectedDiscontinuousConvMode = DISABLE;
   sConfigInjected.AutoInjectedConv = DISABLE;
   sConfigInjected.QueueInjectedContext = DISABLE;
-  sConfigInjected.ExternalTrigInjecConv = ADC_EXTERNALTRIGINJEC_T1_TRGO;
-  sConfigInjected.ExternalTrigInjecConvEdge = ADC_EXTERNALTRIGINJECCONV_EDGE_RISING;
+  sConfigInjected.ExternalTrigInjecConv = ADC_INJECTED_SOFTWARE_START;
+  sConfigInjected.ExternalTrigInjecConvEdge = ADC_EXTERNALTRIGINJECCONV_EDGE_NONE;
   sConfigInjected.InjecOversamplingMode = DISABLE;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {
@@ -341,6 +341,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Injected Channel
   */
+  sConfigInjected.InjectedChannel = ADC_CHANNEL_12;
   sConfigInjected.InjectedRank = ADC_INJECTED_RANK_2;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {
@@ -349,6 +350,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Injected Channel
   */
+  sConfigInjected.InjectedChannel = ADC_CHANNEL_VREFINT;
   sConfigInjected.InjectedRank = ADC_INJECTED_RANK_3;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {
