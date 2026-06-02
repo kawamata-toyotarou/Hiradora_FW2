@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stm32g431xx.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -110,70 +109,70 @@ static void MX_TIM8_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// void set_pwm(float ua, float ub, float uc)
-// {
-//     // クランプ
-//     if (ua < 0.0f) ua = 0.0f;
-//     if (ua > 1.0f) ua = 1.0f;
-//     if (ub < 0.0f) ub = 0.0f;
-//     if (ub > 1.0f) ub = 1.0f;
-//     if (uc < 0.0f) uc = 0.0f;
-//     if (uc > 1.0f) uc = 1.0f;
-
-//     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
-//     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
-//     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
-// }
-
-// SVPWMオープンループ（Vd=0, Vq=voltage で回す）
-// void update_openloop(float voltage)
-// {
-//     float vd = 0.0f;
-//     float vq = voltage;
-
-//     // 逆Park変換
-//     float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
-//     float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
-
-//     // 逆Clarke変換
-//     float u = va;
-//     float v = -0.5f * va + 0.866f * vb;
-//     float w = -0.5f * va - 0.866f * vb;
-
-//     // 0〜1にシフト（センタリング）
-//     float offset = 0.5f;
-//     set_pwm(u + offset, v + offset, w + offset);
-
-//     // 角度更新
-//     electrical_direction += step_move;
-//     if (electrical_direction > 2.0f * M_PI)
-//         electrical_direction -= 2.0f * M_PI;
-// }
 void set_pwm(float ua, float ub, float uc)
 {
-    ua = clamp01(ua);
-    ub = clamp01(ub);
-    uc = clamp01(uc);
+    // クランプ
+    if (ua < 0.0f) ua = 0.0f;
+    if (ua > 1.0f) ua = 1.0f;
+    if (ub < 0.0f) ub = 0.0f;
+    if (ub > 1.0f) ub = 1.0f;
+    if (uc < 0.0f) uc = 0.0f;
+    if (uc > 1.0f) uc = 1.0f;
 
     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
 }
 
-void update_openloop(void)
+
+void update_openloop(float voltage)
 {
-    float a = electrical_direction;
+    float vd = 0.0f;
+    float vq = voltage;
 
-    // 三相正弦（0.5オフセットで0〜1に）
-    float u = 0.5f + amp * sinf(a);
-    float v = 0.5f + amp * sinf(a - 2.0f*M_PI/3.0f);
-    float w = 0.5f + amp * sinf(a + 2.0f*M_PI/3.0f);
+    // 逆Park変換
+    float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
+    float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
 
-    set_pwm(u, v, w);
+    // 逆Clarke変換
+    float u = va;
+    float v = -0.5f * va + 0.866f * vb;
+    float w = -0.5f * va - 0.866f * vb;
 
+    // 0〜1にシフト（センタリング）
+    float offset = 0.5f;
+    set_pwm(u + offset, v + offset, w + offset);
+
+    // 角度更新
     electrical_direction += step_move;
-    if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
+    if (electrical_direction > 2.0f * M_PI)
+        electrical_direction -= 2.0f * M_PI;
 }
+// void set_pwm(float ua, float ub, float uc)
+// {
+//     ua = clamp01(ua);
+//     ub = clamp01(ub);
+//     uc = clamp01(uc);
+
+//     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
+//     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
+//     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
+// }
+
+// void update_openloop(void)
+// {
+   
+
+//     // 三相正弦（0.5オフセットで0〜1に）
+//     float u = 0.5f + amp * sinf(electrical_direction);
+//     float v = 0.5f + amp * sinf(electrical_direction - 2.0f*M_PI/3.0f);
+//     float w = 0.5f + amp * sinf(electrical_direction + 2.0f*M_PI/3.0f);
+
+//     set_pwm(u, v, w);
+
+//     electrical_direction += step_move;
+//     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
+// }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     
@@ -184,11 +183,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             cnt = 0;
             uart_print("tick\r\n");
         }
-        // 超ゆっくり加速（まず回るか確認）
-        if (step_move < 0.010f) step_move +=  0.000001f;  // ここで速度上がる
-        if (amp < 0.05f) amp += 0.0000002f;               // ここでトルク上がる
+       
+        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度決める
+        if (amp < 0.05f) amp += 0.0000002f;               // トルク決める
 
-        update_openloop();
+        update_openloop(amp);
     }
 }
 /* USER CODE END 0 */
@@ -817,6 +816,8 @@ static void MX_TIM2_Init(void)
   /* USER CODE END TIM2_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
@@ -834,6 +835,33 @@ static void MX_TIM2_Init(void)
   }
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_RESET;
+  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
+  sSlaveConfig.TriggerPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sSlaveConfig.TriggerPrescaler = TIM_ICPSC_DIV1;
+  sSlaveConfig.TriggerFilter = 0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim2, &sSlaveConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_INDIRECTTI;
+  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1078,6 +1106,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_RESET);
