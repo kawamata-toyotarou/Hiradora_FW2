@@ -58,6 +58,7 @@ DMA_HandleTypeDef hdma_spi1_rx;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim16;
 TIM_HandleTypeDef htim17;
@@ -79,10 +80,10 @@ static float amp = 0.02f;           // 0.00〜0.30くらいで調整
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
-static void uart_print(const char *s)
-{
-    HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 100);
-}
+// static void uart_print(const char *s)
+// {
+//     HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 100);
+// }
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,6 +104,7 @@ static void MX_OPAMP1_Init(void);
 static void MX_OPAMP2_Init(void);
 static void MX_OPAMP3_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -195,13 +197,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM2)
     {
         static uint32_t cnt = 0;
+        
         if (++cnt >= 5000) {
-          uint32_t i1, i2, i3, vref;
-
           cnt = 0;
-
-          read_current_adc_raw(&i1, &i2, &i3, &vref);
-
         }
        
         if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
@@ -256,8 +254,11 @@ int main(void)
   MX_OPAMP2_Init();
   MX_OPAMP3_Init();
   MX_TIM8_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
+  //エンコーダ―起動
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   // WAKEピンでドライバ起動
   HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
   HAL_Delay(100);
@@ -300,9 +301,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    static int16_t enc_count;
+    enc_count = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+    printf("enc=%d  ", enc_count);
+    HAL_Delay(100);
+
+    static uint32_t i1, i2, i3, vref;
+    read_current_adc_raw(&i1, &i2, &i3, &vref);
+    printf("i1=%lu i2=%lu i3=%lu vref=%lu\r\n",(unsigned long)i1,(unsigned long)i2,(unsigned long)i3,(unsigned long)vref);
     HAL_Delay(1000);
-    // printf("main alive\r\n");
-    printf("i1=%lu i2=%lu i3=%lu vref=%lu\r\n",i1, i2, i3, vref);
   }
   /* USER CODE END 3 */
 }
@@ -901,6 +908,55 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
