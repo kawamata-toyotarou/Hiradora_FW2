@@ -21,8 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <math.h>
+#include <stdio.h>
 #include <string.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,16 +66,15 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 #define PWM_PERIOD 3999
-#define DEAD_TIME_COMP 50
 static float electrical_direction = 0.0f;
 static float step_move = 0.0f;      // rad/ISR
 static float amp = 0.02f;           // 0.00〜0.30くらいで調整
 
-static inline float clamp01(float x){
-    if (x < 0.0f) return 0.0f;
-    if (x > 1.0f) return 1.0f;
-    return x;
-}
+// static inline float clamp01(float x){
+//     if (x < 0.0f) return 0.0f;
+//     if (x > 1.0f) return 1.0f;
+//     return x;
+// }
 
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
@@ -109,6 +109,22 @@ static void MX_TIM8_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+int _write(int file, char *ptr, int len)
+{
+  (void)file;
+  HAL_UART_Transmit(&huart1, (uint8_t*)ptr, (uint16_t)len, 10);
+  return len;
+}
+
+static void read_current_adc_raw(uint32_t *i1, uint32_t *i2, uint32_t *i3, uint32_t *vref)
+{
+    *i1   = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+    *i2   = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+    *vref = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
+    *i3   = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
+}
+
 void set_pwm(float ua, float ub, float uc)
 {
     // クランプ
@@ -179,13 +195,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM2)
     {
         static uint32_t cnt = 0;
-        if (++cnt >= 5000) {   // 約1秒
-            cnt = 0;
-            uart_print("tick\r\n");
+        if (++cnt >= 5000) {
+          uint32_t i1, i2, i3, vref;
+
+          cnt = 0;
+
+          read_current_adc_raw(&i1, &i2, &i3, &vref);
+
         }
        
-        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度決める
-        if (amp < 0.05f) amp += 0.0000002f;               // トルク決める
+        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
+        if (amp < 0.05f) amp += 0.0000001f;               // トルク
 
         update_openloop(amp);
     }
@@ -250,23 +270,27 @@ int main(void)
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 
-  // OPAMPスタート
-  // HAL_OPAMP_Start(&hopamp1);
-  // HAL_OPAMP_Start(&hopamp2);
-  // HAL_OPAMP_Start(&hopamp3);
+  //ADCキャリブレーション＆スタート
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
 
-  // ADCキャリブレーション＆スタート
-  // HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  // HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
-  // HAL_ADCEx_InjectedStart(&hadc1);
-  // HAL_ADCEx_InjectedStart(&hadc2);
+  // OPAMPスタート
+  HAL_OPAMP_Start(&hopamp1);
+  HAL_OPAMP_Start(&hopamp2);
+  HAL_OPAMP_Start(&hopamp3);
+
+  HAL_Delay(2);
+
+  //ADCキャリブレーション＆スタート
+  HAL_ADCEx_InjectedStart(&hadc1);
+  HAL_ADCEx_InjectedStart(&hadc2);
 
   // TIM2でコントロールループ開始（割り込み）
   HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM2_IRQn);
 
   HAL_TIM_Base_Start_IT(&htim2);
-  uart_print("boot\r\n");
+  printf("boot\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -276,6 +300,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    HAL_Delay(1000);
+    // printf("main alive\r\n");
+    printf("i1=%lu i2=%lu i3=%lu vref=%lu\r\n",i1, i2, i3, vref);
   }
   /* USER CODE END 3 */
 }
