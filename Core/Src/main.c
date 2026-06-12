@@ -112,19 +112,31 @@ static void MX_TIM3_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static uint16_t spi_transfer_16(uint16_t tx)
+{
+    uint16_t rx = 0;
+
+    HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_RESET);// 通信開始
+    HAL_SPI_TransmitReceive(&hspi1, (uint8_t*)&tx, (uint8_t*)&rx, 1, HAL_MAX_DELAY);// 16ビット送受信
+    HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET); // 通信終了
+    
+    return rx;
+}
+
+uint16_t as5047p_read_angle(void)
+{
+
+    spi_transfer_16(0xFFFF);   // 1回目に返ってくるデータはゴミ      
+    uint16_t raw = spi_transfer_16(0xC000); // 2回目には何もしない空データを送り、その隙に1回目で要求したデータを受け取る
+    return raw & 0x3FFF;    // 余計なビットを消して、純粋な14ビットデータにする    
+
+}
+
 int _write(int file, char *ptr, int len)
 {
   (void)file;
-  HAL_UART_Transmit(&huart1, (uint8_t*)ptr, (uint16_t)len, 10);
+  HAL_UART_Transmit(&huart1, (uint8_t*)ptr, (uint16_t)len, HAL_MAX_DELAY);
   return len;
-}
-
-static void read_current_adc_raw(uint32_t *i1, uint32_t *i2, uint32_t *i3, uint32_t *vref)
-{
-    *i1   = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
-    *i2   = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
-    *vref = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
-    *i3   = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
 }
 
 void set_pwm(float ua, float ub, float uc)
@@ -191,23 +203,23 @@ void update_openloop(float voltage)
 //     electrical_direction += step_move;
 //     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
 // }
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
+// void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+// {
     
-    if (htim->Instance == TIM2)
-    {
-        static uint32_t cnt = 0;
+//     if (htim->Instance == TIM2)
+//     {
+//         static uint32_t cnt = 0;
         
-        if (++cnt >= 5000) {
-          cnt = 0;
-        }
+//         if (++cnt >= 5000) {
+//           cnt = 0;
+//         }
        
-        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
-        if (amp < 0.05f) amp += 0.0000001f;               // トルク
+//         if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
+//         if (amp < 0.05f) amp += 0.0000001f;               // トルク
 
-        update_openloop(amp);
-    }
-}
+//         update_openloop(amp);
+//     }
+// }
 /* USER CODE END 0 */
 
 /**
@@ -256,41 +268,42 @@ int main(void)
   MX_TIM8_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
-  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-  // WAKEピンでドライバ起動
-  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
-  HAL_Delay(100);
+  // HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+  // // WAKEピンでドライバ起動
+  // HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
+  // HAL_Delay(100);
 
-  // PWM出力開始
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+  // // PWM出力開始
+  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 
-  //ADCキャリブレーション＆スタート
-  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+  // //ADCキャリブレーション＆スタート
+  // HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  // HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
 
-  // OPAMPスタート
-  HAL_OPAMP_Start(&hopamp1);
-  HAL_OPAMP_Start(&hopamp2);
-  HAL_OPAMP_Start(&hopamp3);
+  // // OPAMPスタート
+  // HAL_OPAMP_Start(&hopamp1);
+  // HAL_OPAMP_Start(&hopamp2);
+  // HAL_OPAMP_Start(&hopamp3);
 
-  HAL_Delay(2);
+  // HAL_Delay(2);
 
-  //ADCキャリブレーション＆スタート
-  HAL_ADCEx_InjectedStart(&hadc1);
-  HAL_ADCEx_InjectedStart(&hadc2);
+  // //ADCキャリブレーション＆スタート
+  // HAL_ADCEx_InjectedStart(&hadc1);
+  // HAL_ADCEx_InjectedStart(&hadc2);
 
-  // TIM2でコントロールループ開始（割り込み）
-  HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
-  HAL_NVIC_EnableIRQ(TIM2_IRQn);
+  // // TIM2でコントロールループ開始（割り込み）
+  // HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
+  // HAL_NVIC_EnableIRQ(TIM2_IRQn);
 
-  HAL_TIM_Base_Start_IT(&htim2);
+  // HAL_TIM_Base_Start_IT(&htim2);
+  setvbuf(stdout, NULL, _IONBF, 0);
   printf("boot\r\n");
   /* USER CODE END 2 */
 
@@ -301,15 +314,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    static int16_t enc_count;
-    enc_count = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
-    printf("enc=%d  ", enc_count);
-    HAL_Delay(100);
-
-    static uint32_t i1, i2, i3, vref;
-    read_current_adc_raw(&i1, &i2, &i3, &vref);
-    printf("i1=%lu i2=%lu i3=%lu vref=%lu\r\n",(unsigned long)i1,(unsigned long)i2,(unsigned long)i3,(unsigned long)vref);
-    HAL_Delay(1000);
+    spi_transfer_16(0xFFFC | 0x4000);
+    uint16_t diag = spi_transfer_16(0xC000);
+    printf("DIAG=0x%04X ", diag);
+    uint16_t angle_raw = as5047p_read_angle();
+    float angle_deg = angle_raw * 360.0f / 16384.0f; 
+    printf("RAW=%u (%.1f deg)\r\n", angle_raw, angle_deg);
+    HAL_Delay(200);
   }
   /* USER CODE END 3 */
 }
@@ -816,7 +827,7 @@ static void MX_TIM1_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 50;
+  sBreakDeadTimeConfig.DeadTime = 100;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -850,8 +861,6 @@ static void MX_TIM2_Init(void)
   /* USER CODE END TIM2_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
@@ -869,33 +878,6 @@ static void MX_TIM2_Init(void)
   }
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_IC_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_RESET;
-  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
-  sSlaveConfig.TriggerPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sSlaveConfig.TriggerPrescaler = TIM_ICPSC_DIV1;
-  sSlaveConfig.TriggerFilter = 0;
-  if (HAL_TIM_SlaveConfigSynchro(&htim2, &sSlaveConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_INDIRECTTI;
-  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1189,7 +1171,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_RESET);
