@@ -67,10 +67,15 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 #define PWM_PERIOD 3999
+#define POLE_PAIRS 7
 static float electrical_direction = 0.0f;
 static float step_move = 0.01f;      // rad/ISR
 static float amp = 0.02f;           // 0.00〜0.30くらいで調整
-
+static float zero_offset_rad = 0.0f;
+uint16_t diag;
+float angle_deg;
+uint16_t angle_raw;
+float speed_rpm;
 // static inline float clamp01(float x){
 //     if (x < 0.0f) return 0.0f;
 //     if (x > 1.0f) return 1.0f;
@@ -157,6 +162,10 @@ void set_pwm(float ua, float ub, float uc)
 
 void update_openloop(float voltage)
 {
+    angle_raw = as5047p_read_angle();
+    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
+    electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
+
     float vd = 0.0f;
     float vq = voltage;
 
@@ -203,23 +212,23 @@ void update_openloop(float voltage)
 //     electrical_direction += step_move;
 //     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
 // }
-// void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-// {
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
     
-//     if (htim->Instance == TIM2)
-//     {
-//         static uint32_t cnt = 0;
+    if (htim->Instance == TIM2)
+    {
+        static uint32_t cnt = 0;
         
-//         if (++cnt >= 5000) {
-//           cnt = 0;
-//         }
+        if (++cnt >= 5000) {
+          cnt = 0;
+        }
        
-//         if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
-//         if (amp < 0.05f) amp += 0.0000001f;               // トルク
+        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
+        if (amp < 0.05f) amp += 0.0000001f;               // トルク
 
-//         update_openloop(amp);
-//     }
-// }
+        update_openloop(amp);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -268,6 +277,7 @@ int main(void)
   MX_TIM8_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
@@ -298,6 +308,13 @@ int main(void)
   HAL_ADCEx_InjectedStart(&hadc1);
   HAL_ADCEx_InjectedStart(&hadc2);
 
+  //FCO処理
+  set_pwm(0.6f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
+  HAL_Delay(1000);             // 1秒待って完全に静止させる
+  // その位置を「ゼロ点ズレ」として記憶
+  zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
+  set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
+
   // TIM2でコントロールループ開始（割り込み）
   HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM2_IRQn);
@@ -316,10 +333,10 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
-    uint16_t diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
+    diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
     printf("DIAG=0x%04X ", diag);
-    uint16_t angle_raw = as5047p_read_angle();   //角度取得
-    float angle_deg = angle_raw * 360.0f / 16384.0f; 
+    angle_raw = as5047p_read_angle();   //角度取得
+    angle_deg = angle_raw * 360.0f / 16384.0f; 
     printf("RAW=%u (%.1f deg) ", angle_raw, angle_deg);
     int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
     if (diff > 8192)  diff -= 16384; // 逆回転時の跨ぎ補正
@@ -1232,14 +1249,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM2)
-    {
-        // まずは小さいvoltageで動作確認（0.05〜0.2程度）
-        update_openloop(0.1f);
-    }
-}
+
 /* USER CODE END 4 */
 
 /**
