@@ -68,7 +68,7 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 #define PWM_PERIOD 3999
 static float electrical_direction = 0.0f;
-static float step_move = 0.0f;      // rad/ISR
+static float step_move = 0.01f;      // rad/ISR
 static float amp = 0.02f;           // 0.00〜0.30くらいで調整
 
 // static inline float clamp01(float x){
@@ -270,41 +270,42 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
-  // HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-  // // WAKEピンでドライバ起動
-  // HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
-  // HAL_Delay(100);
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+  // WAKEピンでドライバ起動
+  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
+  HAL_Delay(100);
 
-  // // PWM出力開始
-  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
-  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  // HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+  // PWM出力開始
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 
-  // //ADCキャリブレーション＆スタート
-  // HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  // HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+  //ADCキャリブレーション＆スタート
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
 
-  // // OPAMPスタート
-  // HAL_OPAMP_Start(&hopamp1);
-  // HAL_OPAMP_Start(&hopamp2);
-  // HAL_OPAMP_Start(&hopamp3);
+  // OPAMPスタート
+  HAL_OPAMP_Start(&hopamp1);
+  HAL_OPAMP_Start(&hopamp2);
+  HAL_OPAMP_Start(&hopamp3);
 
-  // HAL_Delay(2);
+  HAL_Delay(2);
 
-  // //ADCキャリブレーション＆スタート
-  // HAL_ADCEx_InjectedStart(&hadc1);
-  // HAL_ADCEx_InjectedStart(&hadc2);
+  //ADCキャリブレーション＆スタート
+  HAL_ADCEx_InjectedStart(&hadc1);
+  HAL_ADCEx_InjectedStart(&hadc2);
 
-  // // TIM2でコントロールループ開始（割り込み）
-  // HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
-  // HAL_NVIC_EnableIRQ(TIM2_IRQn);
+  // TIM2でコントロールループ開始（割り込み）
+  HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(TIM2_IRQn);
 
-  // HAL_TIM_Base_Start_IT(&htim2);
+  HAL_TIM_Base_Start_IT(&htim2);
   setvbuf(stdout, NULL, _IONBF, 0);
   printf("boot\r\n");
+  uint16_t prev_angle_raw = as5047p_read_angle();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -314,12 +315,19 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    spi_transfer_16(0xFFFC | 0x4000);
-    uint16_t diag = spi_transfer_16(0xC000);
+    spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
+    uint16_t diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
     printf("DIAG=0x%04X ", diag);
-    uint16_t angle_raw = as5047p_read_angle();
+    uint16_t angle_raw = as5047p_read_angle();   //角度取得
     float angle_deg = angle_raw * 360.0f / 16384.0f; 
-    printf("RAW=%u (%.1f deg)\r\n", angle_raw, angle_deg);
+    printf("RAW=%u (%.1f deg) ", angle_raw, angle_deg);
+    int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
+    if (diff > 8192)  diff -= 16384; // 逆回転時の跨ぎ補正
+    if (diff < -8192) diff += 16384; // 正回転時の跨ぎ補正
+    prev_angle_raw = angle_raw;
+    float speed_rpm = ((float)diff / 16384.0f) / 0.2f * 60.0f;
+    printf("speed=%d rpm\r\n", (int32_t)speed_rpm);
+    fflush(stdout);
     HAL_Delay(200);
   }
   /* USER CODE END 3 */
@@ -1224,14 +1232,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-// {
-//     if (htim->Instance == TIM2)
-//     {
-//         // まずは小さいvoltageで動作確認（0.05〜0.2程度）
-//         update_openloop(0.1f);
-//     }
-// }
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM2)
+    {
+        // まずは小さいvoltageで動作確認（0.05〜0.2程度）
+        update_openloop(0.1f);
+    }
+}
 /* USER CODE END 4 */
 
 /**
