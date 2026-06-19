@@ -68,27 +68,10 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 #define PWM_PERIOD 3999
 #define POLE_PAIRS 7
-static float electrical_direction = 0.0f;
-static float step_move = 0.01f;      // rad/ISR
-static float amp = 0.02f;           // 0.00〜0.30くらいで調整
-static float zero_offset_rad = 0.0f;
-uint16_t diag;
-float angle_deg;
-uint16_t angle_raw;
-float speed_rpm;
-// static inline float clamp01(float x){
-//     if (x < 0.0f) return 0.0f;
-//     if (x > 1.0f) return 1.0f;
-//     return x;
-// }
 
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
-// static void uart_print(const char *s)
-// {
-//     HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 100);
-// }
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -159,59 +142,51 @@ void set_pwm(float ua, float ub, float uc)
     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
 }
 
+static float electrical_direction = 0.0f;
+static float step_move = 0.01f;      // rad/ISR
+static float amp = 0.05f;           // 0.00〜0.30くらいで調整
+static float zero_offset_rad = 0.0f;
+uint16_t diag;
+float angle_deg;
+uint16_t angle_raw;
+float speed_rpm;
+int32_t speed_rpm_int;
 
 void update_openloop(float voltage)
 {
+    // 1. この割り込みの中だけでSPI通信を行う（メインループからは絶対に呼ばない）
+    static uint16_t prev_angle_raw = 0;
     angle_raw = as5047p_read_angle();
-    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
-    electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
+    
+    // 2. 速度計算（割り込みの周期ごとにきっちり計算）
+    int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
+    if (diff > 8192)  diff -= 16384;
+    if (diff < -8192) diff += 16384;
+    prev_angle_raw = angle_raw;
 
+
+    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
+    //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
+    static float motor_direction = 1.0f; 
+    
+    electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
     float vd = 0.0f;
     float vq = voltage;
 
-    // 逆Park変換
     float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
     float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
 
-    // 逆Clarke変換
     float u = va;
     float v = -0.5f * va + 0.866f * vb;
     float w = -0.5f * va - 0.866f * vb;
 
-    // 0〜1にシフト（センタリング）
     float offset = 0.5f;
     set_pwm(u + offset, v + offset, w + offset);
 
-    // 角度更新
     electrical_direction += step_move;
-    if (electrical_direction > 2.0f * M_PI)
-        electrical_direction -= 2.0f * M_PI;
+    if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
 }
-// void set_pwm(float ua, float ub, float uc)
-// {
-//     ua = clamp01(ua);
-//     ub = clamp01(ub);
-//     uc = clamp01(uc);
 
-//     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
-//     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
-//     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
-// }
-
-// void update_openloop(void)
-// {
-   
-
-//     // 三相正弦（0.5オフセットで0〜1に）
-//     float u = 0.5f + amp * sinf(electrical_direction);
-//     float v = 0.5f + amp * sinf(electrical_direction - 2.0f*M_PI/3.0f);
-//     float w = 0.5f + amp * sinf(electrical_direction + 2.0f*M_PI/3.0f);
-
-//     set_pwm(u, v, w);
-
-//     electrical_direction += step_move;
-//     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
-// }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     
@@ -223,7 +198,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
           cnt = 0;
         }
        
-        if (step_move < 0.010f) step_move +=  0.000001f;  // 速度
+        if (step_move < 0.010f) step_move +=  0.00001f;  // 速度
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
 
         update_openloop(amp);
@@ -332,18 +307,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
-    diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
-    printf("DIAG=0x%04X ", diag);
-    angle_raw = as5047p_read_angle();   //角度取得
-    angle_deg = angle_raw * 360.0f / 16384.0f; 
-    printf("RAW=%u (%.1f deg) ", angle_raw, angle_deg);
-    int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
-    if (diff > 8192)  diff -= 16384; // 逆回転時の跨ぎ補正
-    if (diff < -8192) diff += 16384; // 正回転時の跨ぎ補正
-    prev_angle_raw = angle_raw;
-    float speed_rpm = ((float)diff / 16384.0f) / 0.2f * 60.0f;
-    printf("speed=%d rpm\r\n", (int32_t)speed_rpm);
+    // spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
+    // diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
+    // printf("DIAG=0x%04X ", diag);
+    // angle_raw = as5047p_read_angle();   //角度取得
+    // angle_deg = angle_raw * 360.0f / 16384.0f; 
+    // printf("RAW=%u (%.1f deg) ", angle_raw, angle_deg);
+    // int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
+    // if (diff > 8192)  diff -= 16384; // 逆回転時の跨ぎ補正
+    // if (diff < -8192) diff += 16384; // 正回転時の跨ぎ補正
+    // prev_angle_raw = angle_raw;
+    // float speed_rpm = ((float)diff / 16384.0f) / 0.2f * 60.0f;
+    // printf("speed=%d rpm\r\n", (int32_t)speed_rpm);
+    
+    // fflush(stdout);
+    // HAL_Delay(200);
+    uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
+    
+    // すべて整数(%u や %d)で安全に出力
+    printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
+    
     fflush(stdout);
     HAL_Delay(200);
   }
