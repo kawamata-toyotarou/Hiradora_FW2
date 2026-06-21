@@ -219,7 +219,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
-float locate_pid(float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff) {
+float locate_pid(volatile float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff) {
 
   float input;
   float difference;
@@ -259,14 +259,14 @@ float locate_pid(float output, float target, float p, float i, float d, volatile
   return input;
   }
 
-float speed_pid(float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, float last_last_difference, float last_input, float *low_pass_derivative, int cutoff) {
+float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff) {
   float input;
   float difference;
   float derivarate;
 
   difference = target - output;
   derivarate = difference - 2 * *last_difference + last_last_difference;
-  *low_pass_derivative += (derivative - *low_pass_derivative) / (float)cutoff;
+  *low_pass_derivative += (derivarate - *low_pass_derivative) / (float)cutoff;
 
   if (*low_pass_derivative > 1000.0) {
     *low_pass_derivative = 1000;
@@ -285,8 +285,8 @@ float speed_pid(float output, float target, float p, float i, float d, volatile 
     input = -16384;
   }
 
-  *last_difference = difference;
   *last_last_difference = *last_difference;
+  *last_difference = difference;
 
   return input;
 
