@@ -29,16 +29,22 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct {
+
     volatile float speed;
     float p,i,d;
     volatile float speed_target; 
     volatile float different_sum;
     volatile float low_pass_different_sum;
     volatile float last_difference;
-    volatile int cutoff;
+    volatile float last_input;
+    volatile float low_pass_derivative;
+
 }pid_items;
 
 pid_items motor[3];
+
+float clock_time = 0.0002;
+volatile int cutoff;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -213,11 +219,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
-float pid(float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff){
+float locate_pid(float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff) {
 
-  float difference = target - output;
+  float input;
+  float difference;
+  float derivarate;
 
-  *different_sum += difference * 0.0002f;
+  difference = target - output;
+
+  *different_sum += difference * clock_time;
   if (*different_sum > 10000) {
     *different_sum = 10000;
   }
@@ -225,7 +235,7 @@ float pid(float output, float target, float p, float i, float d, volatile float 
     *different_sum = -10000;
   }
 
-  float derivarate = difference - *last_difference;
+  derivarate = difference - *last_difference;
   *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;
   if (*low_pass_different_sum > 1000.0) {
     *low_pass_different_sum = 1000;
@@ -234,7 +244,7 @@ float pid(float output, float target, float p, float i, float d, volatile float 
     *low_pass_different_sum = -1000.0;
   }
 
-  float input = p * difference + i * (*different_sum) + d * (*low_pass_different_sum);
+  input = p * difference + i * (*different_sum) + d * (*low_pass_different_sum);
 
   *last_difference = difference;
 
@@ -246,6 +256,24 @@ float pid(float output, float target, float p, float i, float d, volatile float 
   }
 
   return input;
+  }
+
+float speed_pid(float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, float last_last_difference, float last_input, float *low_pass_derivative, int cutoff) {
+  float input;
+  float difference;
+  float derivarate;
+
+  difference = target - output;
+  derivarate = difference - 2 * *last_difference + last_last_difference;
+  *low_pass_derivative += (derivative - *low_pass_derivative) / (float)cutoff;
+  input = p * (difference - *last_difference) + i * (difference * clock_time) + d * (difference - 2 * *last_difference + last_last_difference) / clock_time;
+  input += last_input;
+
+  *last_difference = difference;
+  *last_last_difference = *last_difference;
+
+  return input;
+
 }
 /* USER CODE END 0 */
 
