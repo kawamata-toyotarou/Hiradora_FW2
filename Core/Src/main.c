@@ -164,11 +164,9 @@ int32_t speed_rpm_int;
 
 void update_openloop(float voltage)
 {
-    // 1. この割り込みの中だけでSPI通信を行う（メインループからは絶対に呼ばない）
     static uint16_t prev_angle_raw = 0;
     angle_raw = as5047p_read_angle();
     
-    // 2. 速度計算（割り込みの周期ごとにきっちり計算）
     int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
     if (diff > 8192)  diff -= 16384;
     if (diff < -8192) diff += 16384;
