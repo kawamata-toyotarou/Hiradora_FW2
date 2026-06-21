@@ -237,6 +237,7 @@ float locate_pid(float output, float target, float p, float i, float d, volatile
 
   derivarate = difference - *last_difference;
   *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;
+  
   if (*low_pass_different_sum > 1000.0) {
     *low_pass_different_sum = 1000;
   }
@@ -266,8 +267,23 @@ float speed_pid(float output, float target, float p, float i, float d, volatile 
   difference = target - output;
   derivarate = difference - 2 * *last_difference + last_last_difference;
   *low_pass_derivative += (derivative - *low_pass_derivative) / (float)cutoff;
-  input = p * (difference - *last_difference) + i * (difference * clock_time) + d * (difference - 2 * *last_difference + last_last_difference) / clock_time;
+
+  if (*low_pass_derivative > 1000.0) {
+    *low_pass_derivative = 1000;
+  }
+  if (*low_pass_derivative < -1000.0) {
+    *low_pass_derivative = -1000.0;
+  }
+
+  input = p * (difference - *last_difference) + i * (difference * clock_time) + d * *low_pass_derivative / clock_time;
   input += last_input;
+
+  if (input >= 16384) {
+    input = 16384;
+  }
+  if (input <= -16384) {
+    input = -16384;
+  }
 
   *last_difference = difference;
   *last_last_difference = *last_difference;
