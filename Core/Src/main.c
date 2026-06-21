@@ -28,7 +28,17 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    volatile float speed;
+    float p,i,d;
+    volatile float speed_target; 
+    volatile float different_sum;
+    volatile float low_pass_different_sum;
+    volatile float last_difference;
+    volatile int cutoff;
+}pid_items;
 
+pid_items motor[3];
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -204,6 +214,41 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         update_openloop(amp);
     }
 }
+
+float pid(float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff){
+
+  float difference = target - output;
+
+  *different_sum += difference * 0.0002f;
+  if (*different_sum > 10000) {
+    *different_sum = 10000;
+  }
+  if (*different_sum < -10000) {
+    *different_sum = -10000;
+  }
+
+  float derivarate = difference - *last_difference;
+  *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;
+  if (*low_pass_different_sum > 1000.0) {
+    *low_pass_different_sum = 1000;
+  }
+  if (*low_pass_different_sum < -1000.0) {
+    *low_pass_different_sum = -1000.0;
+  }
+
+  float input = p * difference + i * (*different_sum) + d * (*low_pass_different_sum);
+
+  *last_difference = difference;
+
+  if (input >= 16384) {
+    input = 16384;
+  }
+  if (input <= -16384) {
+    input = -16384;
+  }
+
+  return input;
+}
 /* USER CODE END 0 */
 
 /**
@@ -214,10 +259,16 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  for(int i=0;i<3;i++){
+    motor[i].speed=0;
+    motor[i].speed_target=0;
+    motor[i].p=0;
+    motor[i].i=0;
+    motor[i].d=0;
+  }
   /* USER CODE END 1 */
 
-  /* MCU Configuration--------------------------------------------------------*/
+  /* MCU Configuration--------------　　　　　　　　　　　------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
@@ -297,7 +348,7 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim2);
   setvbuf(stdout, NULL, _IONBF, 0);
   printf("boot\r\n");
-  uint16_t prev_angle_raw = as5047p_read_angle();
+  //uint16_t prev_angle_raw = as5047p_read_angle();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -325,7 +376,7 @@ int main(void)
     uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
     
     // すべて整数(%u や %d)で安全に出力
-    printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
+    //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
     
     fflush(stdout);
     HAL_Delay(200);
