@@ -43,7 +43,6 @@ typedef struct {
 
 pid_items motor[3];
 
-float clock_time = 0.0002;
 volatile int cutoff;
 /* USER CODE END PTD */
 
@@ -82,8 +81,9 @@ TIM_HandleTypeDef htim17;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-#define PWM_PERIOD 3999
-#define POLE_PAIRS 7
+#define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
+#define POLE_PAIRS 7         //モーターの外側についている磁石の数
+#define clock_time 0.0002    //time一回当たりの周期
 
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
@@ -145,7 +145,8 @@ int _write(int file, char *ptr, int len)
 
 void set_pwm(float ua, float ub, float uc)
 {
-    // クランプ
+
+    /*各相の電圧指令値は0から1であるので不正な値を消去*/
     if (ua < 0.0f) ua = 0.0f;
     if (ua > 1.0f) ua = 1.0f;
     if (ub < 0.0f) ub = 0.0f;
@@ -153,15 +154,18 @@ void set_pwm(float ua, float ub, float uc)
     if (uc < 0.0f) uc = 0.0f;
     if (uc > 1.0f) uc = 1.0f;
 
+    /*CCRがCNT(0からPWM_PERIODまでの高速カウント)より大きい時low、それ以外はhighとなる*/
     TIM1->CCR1 = (uint32_t)(ua * PWM_PERIOD);
     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
 }
 
-static float electrical_direction = 0.0f;
-static float step_move = 0.01f;      // rad/ISR
-static float amp = 0.05f;           // 0.00〜0.30くらいで調整
-static float zero_offset_rad = 0.0f;
+static float electrical_direction = 0.0f;   
+static float step_move = 0.01f;      //使っていないが残している
+static float amp = 0.05f;           // 出力の大きさを調整できる
+static float zero_offset_rad = 0.0f;  //初期位置のずれを確認する
+
+/*while表示用*/
 uint16_t diag;
 float angle_deg;
 uint16_t angle_raw;
@@ -173,17 +177,19 @@ void update_openloop(float voltage)
     static uint16_t prev_angle_raw = 0;
     angle_raw = as5047p_read_angle();
     
+    /*一回転した時の処理*/
     int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
     if (diff > 8192)  diff -= 16384;
     if (diff < -8192) diff += 16384;
     prev_angle_raw = angle_raw;
 
-
-    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
+    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;  //360度の角度に変更
     //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
     static float motor_direction = 1.0f; 
     
     electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
+
+    /*座標返還*/
     float vd = 0.0f;
     float vq = voltage;
 
@@ -206,6 +212,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     
     if (htim->Instance == TIM2)
     {
+        /*意味ないここから(この部分があるからとはいえプログラムに変化はない)*/
         static uint32_t cnt = 0;
         
         if (++cnt >= 5000) {
@@ -214,11 +221,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
        
         if (step_move < 0.010f) step_move +=  0.00001f;  // 速度
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
+        /*ここまで*/
 
         update_openloop(amp);
     }
 }
 
+/*pid(速度型ではない方)*/
 float locate_pid(volatile float output, float target, float p, float i, float d, volatile float *different_sum, volatile float *low_pass_different_sum, volatile float *last_difference, int cutoff) {
 
   float input;
@@ -236,7 +245,7 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
   }
 
   derivarate = difference - *last_difference;
-  *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;
+  *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;  //ローパス
   
   if (*low_pass_different_sum > 1000.0) {
     *low_pass_different_sum = 1000;
@@ -259,6 +268,7 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
   return input;
   }
 
+/*pid速度型*/
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff) {
   float input;
   float difference;
@@ -266,7 +276,7 @@ float speed_pid(volatile float output, float target, float p, float i, float d, 
 
   difference = target - output;
   derivarate = difference - 2 * *last_difference + last_last_difference;
-  *low_pass_derivative += (derivarate - *low_pass_derivative) / (float)cutoff;
+  *low_pass_derivative += (derivarate - *low_pass_derivative) / (float)cutoff;  //ローパス
 
   if (*low_pass_derivative > 1000.0) {
     *low_pass_derivative = 1000;
