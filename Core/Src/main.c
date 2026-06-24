@@ -257,6 +257,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
         // locate_pidの出力は-16384〜16384なので0〜0.3にスケール変換
         float voltage = voltage_out / 16384.0f * 0.3f;
+        
 
         update_openloop(voltage);
     }
@@ -388,8 +389,8 @@ int main(void)
     motor[i].speed=0.0;
     motor[i].speed_target=100.0;
     motor[i].p=40.0;
-    motor[i].i=0.0;
-    motor[i].d=0.0;
+    motor[i].i=2.0;
+    motor[i].d=1.4;
     motor[i].current_speed_target = 0.0;
   }
   cutoff = 8;
