@@ -39,6 +39,7 @@ typedef struct {
     volatile float last_difference;
     volatile float last_input;
     volatile float low_pass_derivative;
+    volatile float last_last_difference;
 
 }pid_items;
 
@@ -89,6 +90,7 @@ UART_HandleTypeDef huart1;
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
+volatile int pid_mode[3] = {1, 0, 0};   //0ならlocate_pid 1ならspeed_pid
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -112,6 +114,7 @@ static void MX_TIM8_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 float locate_pid(volatile float output, float target, float p, float i, float d,volatile float *different_sum, volatile float *low_pass_different_sum,volatile float *last_difference, int cutoff);
+float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -242,20 +245,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
           }
 
         }
+        float voltage_out = 0.0f;  // ← スコープを外に出す
 
-        float voltage_out = locate_pid(
-            motor[0].speed,                      
-            motor[0].current_speed_target,               
+        if (pid_mode[0] == 0) {
+          voltage_out = locate_pid(motor[0].speed, motor[0].current_speed_target,
+          motor[0].p, motor[0].i, motor[0].d,
+          &motor[0].different_sum, &motor[0].low_pass_different_sum,
+          &motor[0].last_difference, cutoff);
+        }
+
+        if (pid_mode[0] == 1) {
+          voltage_out = speed_pid(
+            motor[0].speed,
+            motor[0].current_speed_target,
             motor[0].p,
             motor[0].i,
             motor[0].d,
-            &motor[0].different_sum,
             &motor[0].low_pass_different_sum,
             &motor[0].last_difference,
+            &motor[0].last_last_difference,
+            motor[0].last_input,
+            &motor[0].low_pass_derivative,
             cutoff
-        );
+    );
+    motor[0].last_input = voltage_out;
+        }
 
-        // locate_pidの出力は-16384〜16384なので0〜0.3にスケール変換
+        // locate_pidとspeed_pidの出力は-16384〜16384なので0〜0.3にスケール変換
         float voltage = voltage_out / 16384.0f * 0.3f;
         
 
@@ -386,13 +402,26 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
     for(int i=0;i<3;i++){
-    motor[i].speed=0.0;
-    motor[i].speed_target=100.0;
-    motor[i].p=40.0;
-    motor[i].i=2.0;
-    motor[i].d=1.4;
-    motor[i].current_speed_target = 0.0;
-  }
+      motor[i].speed=0.0;
+      motor[i].speed_target=100.0;
+      if (pid_mode[i] == 0) {
+        motor[i].p=40.0;
+        motor[i].i=2.0;
+        motor[i].d=1.4;
+      }
+      if (pid_mode[i] == 1) {
+        motor[i].p=0.01;
+        motor[i].i=0.0;
+        motor[i].d=0.0;
+      }
+      motor[i].current_speed_target = 0.0;
+      motor[i].different_sum = 0.0;
+      motor[i].low_pass_different_sum = 0.0;
+      motor[i].last_difference = 0.0;
+      motor[i].last_input = 0.0;
+      motor[i].low_pass_derivative = 0.0;
+      motor[i].last_last_difference = 0.0;
+    }  
   cutoff = 8;
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
@@ -1139,7 +1168,7 @@ static void MX_TIM8_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM8_Init 2 */
-
+  
   /* USER CODE END TIM8_Init 2 */
 
 }
