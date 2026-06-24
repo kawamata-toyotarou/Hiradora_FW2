@@ -33,6 +33,7 @@ typedef struct {
     volatile float speed;
     float p,i,d;
     volatile float speed_target; 
+    volatile float current_speed_target;
     volatile float different_sum;
     volatile float low_pass_different_sum;
     volatile float last_difference;
@@ -175,6 +176,7 @@ int32_t speed_rpm_int;
 void update_openloop(float voltage)
 {
     static uint16_t prev_angle_raw = 0;
+    static float filtered_speed = 0.0;  //cutoffはd項のfilter これは全体の出力filter
     angle_raw = as5047p_read_angle();
     
     /*一回転した時の処理*/
@@ -183,9 +185,10 @@ void update_openloop(float voltage)
     if (diff < -8192) diff += 16384;
     prev_angle_raw = angle_raw;
 
+    /*速度関連*/
     float speed_now = ((float)diff / 16384.0f) / clock_time * 60.0f; //rpmの計算
-
-    motor[0].speed = speed_now;
+    filtered_speed = filtered_speed * 0.7 + speed_now * 0.3;
+    motor[0].speed = filtered_speed;
 
     float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;  //360度の角度に変更
     //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
@@ -229,9 +232,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
         /*ここまで*/
 
+        /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
+        if (motor[0].current_speed_target < motor[0].speed_target) {
+
+          motor[0].current_speed_target += 0.02f;
+
+          if (motor[0].current_speed_target > motor[0].speed_target) {
+            motor[0].current_speed_target = motor[0].speed_target;
+          }
+
+        }
+
         float voltage_out = locate_pid(
-            motor[0].speed,                      // 現在速度
-            motor[0].speed_target,               // 目標速度
+            motor[0].speed,                      
+            motor[0].current_speed_target,               
             motor[0].p,
             motor[0].i,
             motor[0].d,
@@ -373,9 +387,10 @@ int main(void)
     for(int i=0;i<3;i++){
     motor[i].speed=0.0;
     motor[i].speed_target=100.0;
-    motor[i].p=30.0;
+    motor[i].p=40.0;
     motor[i].i=0.0;
     motor[i].d=0.0;
+    motor[i].current_speed_target = 0.0;
   }
   cutoff = 8;
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
