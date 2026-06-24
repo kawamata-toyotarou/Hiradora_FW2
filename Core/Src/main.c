@@ -110,7 +110,7 @@ static void MX_OPAMP3_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-
+float locate_pid(volatile float output, float target, float p, float i, float d,volatile float *different_sum, volatile float *low_pass_different_sum,volatile float *last_difference, int cutoff);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -183,6 +183,10 @@ void update_openloop(float voltage)
     if (diff < -8192) diff += 16384;
     prev_angle_raw = angle_raw;
 
+    float speed_now = ((float)diff / 16384.0f) / clock_time * 60.0f; //rpmの計算
+
+    motor[0].speed = speed_now;
+
     float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;  //360度の角度に変更
     //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
     static float motor_direction = 1.0f; 
@@ -202,9 +206,11 @@ void update_openloop(float voltage)
 
     float offset = 0.5f;
     set_pwm(u + offset, v + offset, w + offset);
-
+    
+    /*意味ない*/
     electrical_direction += step_move;
     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
+    /*ここまで*/
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -223,7 +229,22 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
         /*ここまで*/
 
-        update_openloop(amp);
+        float voltage_out = locate_pid(
+            motor[0].speed,                      // 現在速度
+            motor[0].speed_target,               // 目標速度
+            motor[0].p,
+            motor[0].i,
+            motor[0].d,
+            &motor[0].different_sum,
+            &motor[0].low_pass_different_sum,
+            &motor[0].last_difference,
+            cutoff
+        );
+
+        // locate_pidの出力は-16384〜16384なので0〜0.3にスケール変換
+        float voltage = voltage_out / 16384.0f * 0.3f;
+
+        update_openloop(voltage);
     }
 }
 
@@ -275,7 +296,7 @@ float speed_pid(volatile float output, float target, float p, float i, float d, 
   float derivarate;
 
   difference = target - output;
-  derivarate = difference - 2 * *last_difference + last_last_difference;
+  derivarate = difference - 2 * *last_difference + *last_last_difference;
   *low_pass_derivative += (derivarate - *low_pass_derivative) / (float)cutoff;  //ローパス
 
   if (*low_pass_derivative > 1000.0) {
@@ -311,13 +332,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  for(int i=0;i<3;i++){
-    motor[i].speed=0;
-    motor[i].speed_target=0;
-    motor[i].p=0;
-    motor[i].i=0;
-    motor[i].d=0;
-  }
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------　　　　　　　　　　　------------------------------------------*/
@@ -356,6 +370,14 @@ int main(void)
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
+    for(int i=0;i<3;i++){
+    motor[i].speed=0.0;
+    motor[i].speed_target=100.0;
+    motor[i].p=30.0;
+    motor[i].i=0.0;
+    motor[i].d=0.0;
+  }
+  cutoff = 8;
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
@@ -410,6 +432,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    printf("speed=%d rpm, target=%d rpm\r\n",(int32_t)motor[0].speed,(int32_t)motor[0].speed_target);
+    HAL_Delay(200);
     // spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
     // diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
     // printf("DIAG=0x%04X ", diag);
