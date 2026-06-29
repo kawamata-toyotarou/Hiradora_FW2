@@ -431,25 +431,6 @@ int main(void)
   MX_TIM8_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-
-  /*offsetを計算するための変数*/
-  uint32_t sum_u = 0.0;
-  uint32_t sum_v = 0.0;
-  uint32_t sum_w = 0.0;
-
-  for (int i = 0; i < 100; i++) {
-    HAL_Delay(1); // 少し待ってからADCのInjected変換結果を取得
-    sum_u += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
-    sum_v += HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
-    sum_w += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
-  }
-
-  offset_u = sum_u / 100;
-  offset_v = sum_v / 100;
-  offset_w = sum_w / 100;
-
-  printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
-
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
     motor[i].speed_target=100.0;
@@ -501,6 +482,24 @@ int main(void)
   //ADCキャリブレーション＆スタート
   HAL_ADCEx_InjectedStart(&hadc1);
   HAL_ADCEx_InjectedStart(&hadc2);
+
+  /*offsetを計算するための変数*/
+  uint32_t sum_u = 0.0;
+  uint32_t sum_v = 0.0;
+  uint32_t sum_w = 0.0;
+
+  for (int i = 0; i < 100; i++) {
+    HAL_Delay(1); // 少し待ってからADCのInjected変換結果を取得
+    sum_u += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+    sum_v += HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
+    sum_w += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+  }
+
+  offset_u = sum_u / 100;
+  offset_v = sum_v / 100;
+  offset_w = sum_w / 100;
+
+  printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
 
   //FCO処理
   set_pwm(0.6f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
