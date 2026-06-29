@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -86,11 +87,24 @@ UART_HandleTypeDef huart1;
 #define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
 #define POLE_PAIRS 7         //モーターの外側についている磁石の数
 #define clock_time 0.0002    //time一回当たりの周期
-
+#define resistance_for_current 0.001   //電流計測に用いる抵抗値
+#define opamp_gain 16.0  //cudemxで設定したPGAgainの値
+#define drive_voltage 3.3  //マイコンの駆動電圧
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
-volatile int pid_mode[3] = {1, 0, 0};   //0ならlocate_pid 1ならspeed_pid
+volatile int pid_mode[3] = {0, 0, 0};   //0ならlocate_pid 1ならspeed_pid
+
+/*電流値　単位はアンペア*/
+volatile float current_u = 0.0f;
+volatile float current_v = 0.0f;
+volatile float current_w = 0.0f;
+
+/*実際にADCで読み取った値*/
+uint32_t offset_u = 2048;
+uint32_t offset_v = 2048;
+uint32_t offset_w = 2048;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,6 +129,7 @@ static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 float locate_pid(volatile float output, float target, float p, float i, float d,volatile float *different_sum, volatile float *low_pass_different_sum,volatile float *last_difference, int cutoff);
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff);
+void measure_current(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -275,7 +290,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         float voltage = voltage_out / 16384.0f * 0.3f;
         
 
-        update_openloop(voltage);
+        update_openloop(voltage);  
+
+        measure_current();   //電流測定
     }
 }
 
@@ -353,6 +370,20 @@ float speed_pid(volatile float output, float target, float p, float i, float d, 
   return input;
 
 }
+
+void measure_current(void) {
+
+  // ADCのInjected変換結果  生データ: 0〜4095を取得
+  uint32_t raw_u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+  uint32_t raw_v = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
+  uint32_t raw_w = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+
+  float magnification_conversion = (drive_voltage / 4096.0f) / (opamp_gain * resistance_for_current);    //生データを実際の電流値にする変数と計算
+
+  current_u = ((float)raw_u - (float)offset_u) * magnification_conversion;
+  current_v = ((float)raw_v - (float)offset_v) * magnification_conversion;
+  current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
+}
 /* USER CODE END 0 */
 
 /**
@@ -401,27 +432,45 @@ int main(void)
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
-    for(int i=0;i<3;i++){
-      motor[i].speed=0.0;
-      motor[i].speed_target=100.0;
-      if (pid_mode[i] == 0) {
-        motor[i].p=40.0;
-        motor[i].i=2.0;
-        motor[i].d=1.4;
-      }
-      if (pid_mode[i] == 1) {
-        motor[i].p=0.01;
-        motor[i].i=0.0;
-        motor[i].d=0.0;
-      }
-      motor[i].current_speed_target = 0.0;
-      motor[i].different_sum = 0.0;
-      motor[i].low_pass_different_sum = 0.0;
-      motor[i].last_difference = 0.0;
-      motor[i].last_input = 0.0;
-      motor[i].low_pass_derivative = 0.0;
-      motor[i].last_last_difference = 0.0;
-    }  
+  /*offsetを計算するための変数*/
+  uint32_t sum_u = 0.0;
+  uint32_t sum_v = 0.0;
+  uint32_t sum_w = 0.0;
+
+  for (int i = 0; i < 100; i++) {
+    HAL_Delay(1); // 少し待ってからADCのInjected変換結果を取得
+    sum_u += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+    sum_v += HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
+    sum_w += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+  }
+
+  offset_u = sum_u / 100;
+  offset_v = sum_v / 100;
+  offset_w = sum_w / 100;
+
+  printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
+
+  for(int i=0;i<3;i++){
+    motor[i].speed=0.0;
+    motor[i].speed_target=100.0;
+    if (pid_mode[i] == 0) {
+      motor[i].p=37.0;
+      motor[i].i=2.0;
+      motor[i].d=1.4;
+    }
+    if (pid_mode[i] == 1) {
+      motor[i].p=0.01;
+      motor[i].i=0.0;
+      motor[i].d=0.0;
+    }
+    motor[i].current_speed_target = 0.0;
+    motor[i].different_sum = 0.0;
+    motor[i].low_pass_different_sum = 0.0;
+    motor[i].last_difference = 0.0;
+    motor[i].last_input = 0.0;
+    motor[i].low_pass_derivative = 0.0;
+    motor[i].last_last_difference = 0.0;
+  }  
   cutoff = 8;
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
@@ -477,8 +526,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    printf("speed=%d rpm, target=%d rpm\r\n",(int32_t)motor[0].speed,(int32_t)motor[0].speed_target);
-    HAL_Delay(200);
+
+    //printf("speed=%d rpm, target=%d rpm\r\n",(int32_t)motor[0].speed,(int32_t)motor[0].speed_target);
+    //uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
+    //HAL_Delay(200);
+
     // spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
     // diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
     // printf("DIAG=0x%04X ", diag);
@@ -494,7 +546,6 @@ int main(void)
     
     // fflush(stdout);
     // HAL_Delay(200);
-    uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
     
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
