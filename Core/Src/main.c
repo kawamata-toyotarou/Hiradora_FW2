@@ -295,7 +295,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
         update_openloop(voltage);  
 
-        measure_current();   //電流測定
+        //measure_current();   //電流測定
     }
 }
 
@@ -378,7 +378,7 @@ void measure_current(void) {
 
   // ADCのInjected変換結果  生データ: 0〜4095を取得
   uint32_t raw_u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
-  uint32_t raw_v = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
+  //uint32_t raw_v = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
   uint32_t raw_w = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
 
   float magnification_conversion = (drive_voltage / 4096.0f) / (opamp_gain * resistance_for_current);    //生データを実際の電流値にする変数と計算
@@ -386,6 +386,13 @@ void measure_current(void) {
   current_u = ((float)raw_u - (float)offset_u) * magnification_conversion;
   current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
   current_v = -(current_u + current_w);   //キルヒホッフの法則
+}
+
+void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1) {  //PWMのスイッチングタイミングとADCサンプリングが同期させてノイズを減らす? よくわからない
+        measure_current();
+    }
 }
 /* USER CODE END 0 */
 
@@ -443,9 +450,9 @@ int main(void)
       //motor[i].i=2.0;
       //motor[i].d=1.4;
       //n5065
-      motor[i].p=24;
-      motor[i].i=1.5;
-      motor[i].d=0.9;
+      motor[i].p=30;
+      motor[i].i=1.7;
+      motor[i].d=1.2;
     }
     if (pid_mode[i] == 1) {
       motor[i].p=0.01;
@@ -488,6 +495,7 @@ int main(void)
   HAL_Delay(2);
 
   //ADCキャリブレーション＆スタート
+  // まずITなしでオフセット計測 オフセットを正確に行うため
   HAL_ADCEx_InjectedStart(&hadc1);
   HAL_ADCEx_InjectedStart(&hadc2);
 
@@ -508,6 +516,12 @@ int main(void)
   offset_w = sum_w / 100;
 
   printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
+
+  // オフセット計測後にIT版に切り替え ここから割り込みを行うことでoffsetにノイズがのることを防ぐ
+  HAL_ADCEx_InjectedStop(&hadc1);
+  HAL_ADCEx_InjectedStop(&hadc2);
+  HAL_ADCEx_InjectedStart_IT(&hadc1);
+  HAL_ADCEx_InjectedStart_IT(&hadc2);
 
   //FCO処理
   set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
@@ -557,7 +571,7 @@ int main(void)
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
     printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
-    (int)(speed_now), 
+    (int)(motor[0].speed), 
     (int)(current_u * 1000000),  // μA単位
     (int)(current_v * 1000000), 
     (int)(current_w * 1000000));
