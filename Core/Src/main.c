@@ -253,7 +253,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
         if (motor[0].current_speed_target < motor[0].speed_target) {
 
-          motor[0].current_speed_target += 0.02f;
+          motor[0].current_speed_target += 0.05f;
 
           if (motor[0].current_speed_target > motor[0].speed_target) {
             motor[0].current_speed_target = motor[0].speed_target;
@@ -306,11 +306,11 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
   difference = target - output;
 
   *different_sum += difference * clock_time;
-  if (*different_sum > 10000) {
-    *different_sum = 10000;
+  if (*different_sum > 1000) {
+    *different_sum = 1000;
   }
-  if (*different_sum < -10000) {
-    *different_sum = -10000;
+  if (*different_sum < -1000) {
+    *different_sum = -1000;
   }
 
   derivarate = difference - *last_difference;
@@ -433,11 +433,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=100.0;
+    motor[i].speed_target=300.0;
     if (pid_mode[i] == 0) {
-      motor[i].p=37.0;
-      motor[i].i=2.0;
-      motor[i].d=1.4;
+      //n2830
+      //motor[i].p=37.0;
+      //motor[i].i=2.0;
+      //motor[i].d=1.4;
+      //n5065
+      motor[i].p=21;
+      motor[i].i=1.3;
+      motor[i].d=0.8;
     }
     if (pid_mode[i] == 1) {
       motor[i].p=0.01;
@@ -502,8 +507,8 @@ int main(void)
   printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
 
   //FCO処理
-  set_pwm(0.6f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
-  HAL_Delay(1000);             // 1秒待って完全に静止させる
+  set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
+  HAL_Delay(500);             // 1秒待って完全に静止させる
   // その位置を「ゼロ点ズレ」として記憶
   zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
   set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
@@ -548,7 +553,9 @@ int main(void)
     
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
-    
+    for (int i = 0; i< 3;i++) {
+      printf("motor[%d]=%f\n", i, motor[i].speed);
+    }
     fflush(stdout);
     HAL_Delay(200);
   }
