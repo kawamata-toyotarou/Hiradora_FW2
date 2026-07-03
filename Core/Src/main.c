@@ -100,6 +100,9 @@ volatile float current_u = 0.0f;
 volatile float current_v = 0.0f;
 volatile float current_w = 0.0f;
 
+//現在の速度を計算する？ための関数
+volatile float speed_now = 0;
+
 /*実際にADCで読み取った値*/
 uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
@@ -204,7 +207,7 @@ void update_openloop(float voltage)
     prev_angle_raw = angle_raw;
 
     /*速度関連*/
-    float speed_now = ((float)diff / 16384.0f) / clock_time * 60.0f; //rpmの計算
+    speed_now = ((float)diff / 16384.0f) / clock_time * 60.0f; //rpmの計算
     filtered_speed = filtered_speed * 0.7 + speed_now * 0.3;
     motor[0].speed = filtered_speed;
 
@@ -381,8 +384,8 @@ void measure_current(void) {
   float magnification_conversion = (drive_voltage / 4096.0f) / (opamp_gain * resistance_for_current);    //生データを実際の電流値にする変数と計算
 
   current_u = ((float)raw_u - (float)offset_u) * magnification_conversion;
-  current_v = ((float)raw_v - (float)offset_v) * magnification_conversion;
   current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
+  current_v = -(current_u + current_w);   //キルヒホッフの法則
 }
 /* USER CODE END 0 */
 
@@ -440,9 +443,9 @@ int main(void)
       //motor[i].i=2.0;
       //motor[i].d=1.4;
       //n5065
-      motor[i].p=21;
-      motor[i].i=1.3;
-      motor[i].d=0.8;
+      motor[i].p=24;
+      motor[i].i=1.5;
+      motor[i].d=0.9;
     }
     if (pid_mode[i] == 1) {
       motor[i].p=0.01;
@@ -553,9 +556,11 @@ int main(void)
     
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
-    for (int i = 0; i< 3;i++) {
-      printf("motor[%d]=%f\n", i, motor[i].speed);
-    }
+    printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
+    (int)(speed_now), 
+    (int)(current_u * 1000000),  // μA単位
+    (int)(current_v * 1000000), 
+    (int)(current_w * 1000000));
     fflush(stdout);
     HAL_Delay(200);
   }
