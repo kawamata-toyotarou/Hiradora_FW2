@@ -232,30 +232,31 @@ void update_openloop(float voltage)
     
     electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
     
+    float vd;
+    float vq;
     /*速度制御*/
     if (control_motor_mode[0] == 0) {
 
-    /*座標返還*/
-    float vd = 0.0f;
-    float vq = voltage;
-
-    float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
-    float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
+      /*座標返還*/
+      vd = 0.0f;
+      vq = voltage;
                               
     }
 
     /*電流制御*/
     if (control_motor_mode[0] == 1){
-        float vd = locate_pid(motors[0].current_d, motor[0].current_d_target, motors[0].current_d_pgain, motors[0].current_d_igain, motors[0].current_d_dgain, *motor[0].current_d_different_sum, *motor[0].current_d_low_pass_different_sum, *motor[0].current_d_last_difference, cutoff);
-        float vq = locate_pid(motors[0].current_p, motor[0].current_p_target, motors[0].current_p_pgain, motors[0].current_p_igain, motors[0].current_p_dgain, *motor[0].current_p_different_sum, *motor[0].current_p_low_pass_different_sum, *motor[0].current_p_last_difference, cutoff);
+        vd = locate_pid(motor[0].current_d, motor[0].current_d_target, motor[0].current_d_pgain, motor[0].current_d_igain, motor[0].current_d_dgain, &motor[0].current_d_different_sum, &motor[0].current_d_low_pass_different_sum, &motor[0].current_d_last_difference, cutoff);
+        vq = locate_pid(motor[0].current_p, motor[0].current_p_target, motor[0].current_p_pgain, motor[0].current_p_igain, motor[0].current_p_dgain, &motor[0].current_p_different_sum, &motor[0].current_p_low_pass_different_sum, &motor[0].current_p_last_difference, cutoff);
 
         if (vd > 0.3f)  vd = 0.3f;
         if (vd < -0.3f) vd = -0.3f;
         if (vq > 0.3f)  vq = 0.3f;
         if (vq < -0.3f) vq = -0.3f;
 
-        
     }
+    
+    float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
+    float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
 
     float u = va;
     float v = -0.5f * va + 0.866f * vb;
@@ -292,8 +293,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
           motor[0].now_speed_target += 0.05f;
 
-          if (motor[0].now_speed_target_speed_target > motor[0].speed_target) {
-            motor[0].now_speed_target_speed_target = motor[0].speed_target;
+          if (motor[0].now_speed_target > motor[0].speed_target) {
+            motor[0].now_speed_target = motor[0].speed_target;
           }
 
         }
@@ -309,7 +310,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (pid_mode[0] == 1) {
           voltage_out = speed_pid(
             motor[0].speed,
-            motor[0].now_speed_target_speed_target,
+            motor[0].now_speed_target,
             motor[0].p,
             motor[0].i,
             motor[0].d,
