@@ -11,7 +11,7 @@
   *
   * This software is licensed under terms that can be found in the LICENSE file
   * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
+  * If no LICENSE file comes \with this software, it is provided AS-IS.
   *
   ******************************************************************************
   */
@@ -30,18 +30,27 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct {
-
     volatile float speed;
     float p,i,d;
     volatile float speed_target; 
-    volatile float current_speed_target;
+    volatile float now_speed_target;
     volatile float different_sum;
     volatile float low_pass_different_sum;
     volatile float last_difference;
     volatile float last_input;
     volatile float low_pass_derivative;
     volatile float last_last_difference;
-
+    volatile float current_d_target;
+    volatile float current_p_target;
+    volatile float current_different_sum;
+    volatile float current_low_pass_different_sum;
+    volatile float current_last_last_difference;      //currentは電流といういみ　現在ではない
+    volatile float current_d_pgain;
+    volatile float current_d_igain;
+    volatile float current_d_dgain;
+    volatile float current_p_pgain;
+    volatile float current_p_igain;
+    volatile float current_p_dgain;
 }pid_items;
 
 pid_items motor[3];
@@ -223,7 +232,7 @@ void update_openloop(float voltage)
 
     float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
     float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
-
+                              
     float u = va;
     float v = -0.5f * va + 0.866f * vb;
     float w = -0.5f * va - 0.866f * vb;
@@ -254,19 +263,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         /*ここまで*/
 
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
-        if (motor[0].current_speed_target < motor[0].speed_target) {
+        if (motor[0].now_speed_target < motor[0].speed_target) {
 
-          motor[0].current_speed_target += 0.05f;
+          motor[0].now_speed_target += 0.05f;
 
-          if (motor[0].current_speed_target > motor[0].speed_target) {
-            motor[0].current_speed_target = motor[0].speed_target;
+          if (motor[0].now_speed_target_speed_target > motor[0].speed_target) {
+            motor[0].now_speed_target_speed_target = motor[0].speed_target;
           }
 
         }
         float voltage_out = 0.0f;  // ← スコープを外に出す
 
         if (pid_mode[0] == 0) {
-          voltage_out = locate_pid(motor[0].speed, motor[0].current_speed_target,
+          voltage_out = locate_pid(motor[0].speed, motor[0].now_speed_target,
           motor[0].p, motor[0].i, motor[0].d,
           &motor[0].different_sum, &motor[0].low_pass_different_sum,
           &motor[0].last_difference, cutoff);
@@ -275,7 +284,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (pid_mode[0] == 1) {
           voltage_out = speed_pid(
             motor[0].speed,
-            motor[0].current_speed_target,
+            motor[0].now_speed_target_speed_target,
             motor[0].p,
             motor[0].i,
             motor[0].d,
@@ -317,7 +326,7 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
   }
 
   derivarate = difference - *last_difference;
-  *low_pass_different_sum = (derivarate - *low_pass_different_sum) / (float)cutoff;  //ローパス
+  *low_pass_different_sum += (derivarate - *low_pass_different_sum) / (float)cutoff;  //ローパス
   
   if (*low_pass_different_sum > 1000.0) {
     *low_pass_different_sum = 1000;
@@ -443,7 +452,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=300.0;
+    motor[i].speed_target=500.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -455,11 +464,11 @@ int main(void)
       motor[i].d=1.2;
     }
     if (pid_mode[i] == 1) {
-      motor[i].p=0.01;
-      motor[i].i=0.0;
+      motor[i].p=1.0;
+      motor[i].i=0.05;
       motor[i].d=0.0;
     }
-    motor[i].current_speed_target = 0.0;
+    motor[i].now_speed_target = 0.0;
     motor[i].different_sum = 0.0;
     motor[i].low_pass_different_sum = 0.0;
     motor[i].last_difference = 0.0;
