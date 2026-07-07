@@ -421,6 +421,16 @@ void measure_current(void) {
   current_u = ((float)raw_u - (float)offset_u) * magnification_conversion;
   current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
   current_v = -(current_u + current_w);   //キルヒホッフの法則
+
+  // Clarke変換 (u,v,w → alpha,beta)
+  float i_alpha = current_u;
+  float i_beta  = (current_u + 2.0f * current_v) * 0.57735f; // 1/sqrt(3)
+
+  float id =  i_alpha * fast_cos(electrical_direction) + i_beta * fast_sin(electrical_direction);
+  float iq = -i_alpha * fast_sin(electrical_direction) + i_beta * fast_cos(electrical_direction);
+
+  motor[0].current_d = id;
+  motor[0].current_p = iq; 
 }
 
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
