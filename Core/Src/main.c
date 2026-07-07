@@ -40,11 +40,16 @@ typedef struct {
     volatile float last_input;
     volatile float low_pass_derivative;
     volatile float last_last_difference;
+    volatile float current_d;
+    volatile float current_p;
     volatile float current_d_target;
     volatile float current_p_target;
-    volatile float current_different_sum;
-    volatile float current_low_pass_different_sum;
-    volatile float current_last_last_difference;      //currentは電流といういみ　現在ではない
+    volatile float current_d_different_sum;
+    volatile float current_d_low_pass_different_sum;
+    volatile float current_d_last_difference;      //currentは電流といういみ　現在ではない
+    volatile float current_p_different_sum;
+    volatile float current_p_low_pass_different_sum;
+    volatile float current_p_last_difference; 
     volatile float current_d_pgain;
     volatile float current_d_igain;
     volatile float current_d_dgain;
@@ -103,6 +108,7 @@ static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
 volatile int pid_mode[3] = {0, 0, 0};   //0ならlocate_pid 1ならspeed_pid
+volatile int control_motor_mode[3] = {0, 0, 0};       //モーターの制御モード
 
 /*電流値　単位はアンペア*/
 volatile float current_u = 0.0f;
@@ -225,6 +231,9 @@ void update_openloop(float voltage)
     static float motor_direction = 1.0f; 
     
     electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
+    
+    /*速度制御*/
+    if (control_motor_mode[0] == 0) {
 
     /*座標返還*/
     float vd = 0.0f;
@@ -233,6 +242,21 @@ void update_openloop(float voltage)
     float va = vd * fast_cos(electrical_direction) - vq * fast_sin(electrical_direction);
     float vb = vd * fast_sin(electrical_direction) + vq * fast_cos(electrical_direction);
                               
+    }
+
+    /*電流制御*/
+    if (control_motor_mode[0] == 1){
+        float vd = locate_pid(motors[0].current_d, motor[0].current_d_target, motors[0].current_d_pgain, motors[0].current_d_igain, motors[0].current_d_dgain, *motor[0].current_d_different_sum, *motor[0].current_d_low_pass_different_sum, *motor[0].current_d_last_difference, cutoff);
+        float vq = locate_pid(motors[0].current_p, motor[0].current_p_target, motors[0].current_p_pgain, motors[0].current_p_igain, motors[0].current_p_dgain, *motor[0].current_p_different_sum, *motor[0].current_p_low_pass_different_sum, *motor[0].current_p_last_difference, cutoff);
+
+        if (vd > 0.3f)  vd = 0.3f;
+        if (vd < -0.3f) vd = -0.3f;
+        if (vq > 0.3f)  vq = 0.3f;
+        if (vq < -0.3f) vq = -0.3f;
+
+        
+    }
+
     float u = va;
     float v = -0.5f * va + 0.866f * vb;
     float w = -0.5f * va - 0.866f * vb;
@@ -244,6 +268,7 @@ void update_openloop(float voltage)
     electrical_direction += step_move;
     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
     /*ここまで*/
+
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
