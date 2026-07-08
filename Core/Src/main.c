@@ -501,9 +501,12 @@ int main(void)
         motor[i].d=1.2;
       }
       if(control_motor_mode == 1){
-        motor[i].p=0.0;
-        motor[i].i=0.0;
-        motor[i].d=0.0;
+        motor[i].current_d_pgain = 0.0;
+        motor[i].current_d_igain = 0.0;
+        motor[i].current_d_dgain = 0.0;
+        motor[i].current_p_pgain = 0.0;
+        motor[i].current_p_igain = 0.0;
+        motor[i].current_p_dgain = 0.0;
       }
     }
     if (pid_mode[i] == 1) {
@@ -513,9 +516,12 @@ int main(void)
       motor[i].d=0.0;
       }
       if(control_motor_mode == 1){
-        motor[i].p=0.0;
-        motor[i].i=0.0;
-        motor[i].d=0.0;
+        motor[i].current_d_pgain = 0.0;
+        motor[i].current_d_igain = 0.0;
+        motor[i].current_d_dgain = 0.0;
+        motor[i].current_p_pgain = 0.0;
+        motor[i].current_p_igain = 0.0;
+        motor[i].current_p_dgain = 0.0;
       }
     }
     motor[i].now_speed_target = 0.0;
@@ -535,12 +541,6 @@ int main(void)
     motor[i].current_p_different_sum = 0.0;
     motor[i].current_p_low_pass_different_sum = 0.0;
     motor[i].current_p_last_difference = 0.0; 
-    motor[i].current_d_pgain = 0.0;
-    motor[i].current_d_igain = 0.0;
-    motor[i].current_d_dgain = 0.0;
-    motor[i].current_p_pgain = 0.0;
-    motor[i].current_p_igain = 0.0;
-    motor[i].current_p_dgain = 0.0;
   }  
   cutoff = 8;
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
