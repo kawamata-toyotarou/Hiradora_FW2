@@ -495,12 +495,12 @@ int main(void)
       //motor[i].i=2.0;
       //motor[i].d=1.4;
       //n5065
-      if(control_motor_mode == 0){
+      if(control_motor_mode[i] == 0){
         motor[i].p=30;
         motor[i].i=1.7;
         motor[i].d=1.2;
       }
-      if(control_motor_mode == 1){
+      if(control_motor_mode[i] == 1){
         motor[i].current_d_pgain = 0.0;
         motor[i].current_d_igain = 0.0;
         motor[i].current_d_dgain = 0.0;
@@ -510,12 +510,12 @@ int main(void)
       }
     }
     if (pid_mode[i] == 1) {
-      if(control_motor_mode == 0){
+      if(control_motor_mode[i] == 0){
       motor[i].p=1.0;
       motor[i].i=0.05;
       motor[i].d=0.0;
       }
-      if(control_motor_mode == 1){
+      if(control_motor_mode[i] == 1){
         motor[i].current_d_pgain = 0.0;
         motor[i].current_d_igain = 0.0;
         motor[i].current_d_dgain = 0.0;
