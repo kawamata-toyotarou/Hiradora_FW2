@@ -98,6 +98,32 @@ TIM_HandleTypeDef htim17;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+
+#define STSPIN_I2C_ADDR   (0x47 << 1)   // 7bit 1000111 を8bit化
+
+static HAL_StatusTypeDef stspin_write_reg(uint8_t reg, uint8_t val)
+{
+    return HAL_I2C_Mem_Write(&hi2c3, STSPIN_I2C_ADDR, reg,
+                              I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+}
+
+static HAL_StatusTypeDef stspin_read_reg(uint8_t reg, uint8_t *val)
+{
+    return HAL_I2C_Mem_Read(&hi2c3, STSPIN_I2C_ADDR, reg,
+                             I2C_MEMADD_SIZE_8BIT, val, 1, 100);
+}
+
+// STATUSレジスタ(0x80)を読み、フォルトがあればCLEAR(0x09)に0xFFを書く
+static uint8_t stspin_clear_faults(void)
+{
+    uint8_t status = 0;
+    stspin_read_reg(0x80, &status);
+    if (status & 0x0F) {          // RESET/VDS_P/THSD/VCC_UVLOのどれか
+        stspin_write_reg(0x09, 0xFF);  // CLEARレジスタ
+    }
+    return status;
+}
+
 #define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
 #define POLE_PAIRS 7         //モーターの外側についている磁石の数
 #define clock_time 0.0002    //time一回当たりの周期
@@ -451,7 +477,7 @@ int main(void)
   /* USER CODE BEGIN 1 */
   /* USER CODE END 1 */
 
-  /* MCU Configuration--------------　　　　　　　　　　　------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
@@ -550,6 +576,11 @@ int main(void)
   HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
   HAL_Delay(100);
 
+  HAL_Delay(5);
+  stspin_clear_faults();
+  HAL_Delay(5);
+  stspin_clear_faults();   // 念のため2回
+
   // PWM出力開始
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
@@ -619,6 +650,21 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    static uint32_t fault_check_cnt = 0;
+    if (++fault_check_cnt >= 5) {   // 200ms×5=1秒ごとくらいでもOK。もっと頻繁でも良い
+        fault_check_cnt = 0;
+        uint8_t st = stspin_clear_faults();
+        if (st & 0x04) {
+            printf("VDS protection tripped! cleared.\r\n");
+        }
+        if (st & 0x08) {
+            printf("Device RESET detected! cleared.\r\n");
+        }
+    }
+
+    
+    fflush(stdout);
+    HAL_Delay(200);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -645,13 +691,13 @@ int main(void)
     
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
-    printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
-    (int)(motor[0].speed), 
-    (int)(current_u * 1000000),  // μA単位
-    (int)(current_v * 1000000), 
-    (int)(current_w * 1000000));
-    fflush(stdout);
-    HAL_Delay(200);
+    // printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
+    // (int)(motor[0].speed), 
+    // (int)(current_u * 1000000),  // μA単位
+    // (int)(current_v * 1000000), 
+    // (int)(current_w * 1000000));
+    // fflush(stdout);
+    // HAL_Delay(200);
   }
   /* USER CODE END 3 */
 }
