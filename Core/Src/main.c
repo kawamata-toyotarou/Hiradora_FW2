@@ -27,6 +27,7 @@
 #include <math.h>
 /* USER CODE END Includes */
 
+
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct {
@@ -99,7 +100,7 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-#define STSPIN_I2C_ADDR   (0x47 << 1)   // 7bit 1000111 を8bit化
+#define STSPIN_I2C_ADDR   (0x47 << 1)   // I2Cのスレーブアドレスには7bitアドレスと8bitアドレスがあり、アドレスの後ろに読み込みか書き込みかを示す1bit（R/Wビット）がくっついて送信される。
 
 static HAL_StatusTypeDef stspin_write_reg(uint8_t reg, uint8_t val)
 {
@@ -118,7 +119,7 @@ static uint8_t stspin_clear_faults(void)
 {
     uint8_t status = 0;
     stspin_read_reg(0x80, &status);
-    if (status & 0x0F) {          // RESET/VDS_P/THSD/VCC_UVLOのどれか
+    if (status & 0x0F) {          // もしstatusの下位4bitの中に1があり、エラーがある場合はifが通る
         stspin_write_reg(0x09, 0xFF);  // CLEARレジスタ
     }
     return status;
