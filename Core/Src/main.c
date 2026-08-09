@@ -27,7 +27,6 @@
 #include <math.h>
 /* USER CODE END Includes */
 
-
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct {
@@ -150,6 +149,18 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
+#define MOTOR_ID   0u          /* ← 基板Aは0, 基板Bは1, 基板Cは2 に変えてビルド */
+
+#define CAN_MOTOR_CMD_BASE_ID  0x100u
+#define CAN_MY_CMD_ID          (CAN_MOTOR_CMD_BASE_ID + MOTOR_ID)
+
+typedef struct __attribute__((packed)) {
+    float   speed_target;         /* byte0-3 */
+    uint8_t pid_mode;             /* byte4: 0=locate_pid, 1=speed_pid */
+    uint8_t control_motor_mode;   /* byte5: 0=電圧制御, 1=電流制御 */
+    uint8_t reserved[2];          /* byte6-7 */
+} can_motor_cmd_t;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -175,10 +186,72 @@ static void MX_TIM3_Init(void);
 float locate_pid(volatile float output, float target, float p, float i, float d,volatile float *different_sum, volatile float *low_pass_different_sum,volatile float *last_difference, int cutoff);
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff);
 void measure_current(void);
+static void FDCAN1_ConfigFilterAndStart(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static void FDCAN1_ConfigFilterAndStart(void)
+{
+    FDCAN_FilterTypeDef sFilterConfig;
+
+    /* 自分のID(0x100+MOTOR_ID)だけを通す。EXACT一致でOK(RANGEでなくてよい) */
+    sFilterConfig.IdType       = FDCAN_STANDARD_ID;
+    sFilterConfig.FilterIndex  = 0;
+    sFilterConfig.FilterType   = FDCAN_FILTER_DUAL;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    sFilterConfig.FilterID1    = CAN_MY_CMD_ID;
+    sFilterConfig.FilterID2    = CAN_MY_CMD_ID;   /* DUALで同じIDを2つ指定=1個だけ通す */
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT,
+                                      FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+}
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0) return;
+
+    FDCAN_RxHeaderTypeDef RxHeader;
+    uint8_t RxData[8];
+
+    if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK)
+    {
+        return;
+    }
+
+    if (RxHeader.IdType != FDCAN_STANDARD_ID) return;
+    if (RxHeader.Identifier != CAN_MY_CMD_ID) return;
+    if (RxHeader.DataLength != FDCAN_DLC_BYTES_8) return;
+
+    can_motor_cmd_t cmd;
+    memcpy(&cmd, RxData, sizeof(cmd));
+
+    if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
+    if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
+
+    /* この基板にはmotor[0]しか配線されていないので、常にmotor[0]に反映 */
+    motor[0].speed_target     = cmd.speed_target;
+    pid_mode[0]                = cmd.pid_mode ? 1 : 0;
+    control_motor_mode[0]      = cmd.control_motor_mode ? 1 : 0;
+}
 
 static uint16_t spi_transfer_16(uint16_t tx)
 {
@@ -933,7 +1006,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataSyncJumpWidth = 1;
   hfdcan1.Init.DataTimeSeg1 = 1;
   hfdcan1.Init.DataTimeSeg2 = 1;
-  hfdcan1.Init.StdFiltersNbr = 0;
+  hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
@@ -941,7 +1014,7 @@ static void MX_FDCAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
-
+  FDCAN1_ConfigFilterAndStart();
   /* USER CODE END FDCAN1_Init 2 */
 
 }
