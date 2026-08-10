@@ -247,7 +247,6 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
     if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
 
-    /* この基板にはmotor[0]しか配線されていないので、常にmotor[0]に反映 */
     motor[0].speed_target     = cmd.speed_target;
     pid_mode[0]                = cmd.pid_mode ? 1 : 0;
     control_motor_mode[0]      = cmd.control_motor_mode ? 1 : 0;
@@ -586,159 +585,13 @@ int main(void)
   MX_TIM8_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  for(int i=0;i<3;i++){
-    motor[i].speed=0.0;
-    motor[i].speed_target=500.0;
-    if (pid_mode[i] == 0) {
-      //n2830
-      //motor[i].p=37.0;
-      //motor[i].i=2.0;
-      //motor[i].d=1.4;
-      //n5065
-      if(control_motor_mode[i] == 0){
-        motor[i].p=30;
-        motor[i].i=1.7;
-        motor[i].d=1.2;
-      }
-      if(control_motor_mode[i] == 1){
-        motor[i].current_d_pgain = 0.0;
-        motor[i].current_d_igain = 0.0;
-        motor[i].current_d_dgain = 0.0;
-        motor[i].current_p_pgain = 0.0;
-        motor[i].current_p_igain = 0.0;
-        motor[i].current_p_dgain = 0.0;
-      }
-    }
-    if (pid_mode[i] == 1) {
-      if(control_motor_mode[i] == 0){
-      motor[i].p=1.0;
-      motor[i].i=0.05;
-      motor[i].d=0.0;
-      }
-      if(control_motor_mode[i] == 1){
-        motor[i].current_d_pgain = 0.0;
-        motor[i].current_d_igain = 0.0;
-        motor[i].current_d_dgain = 0.0;
-        motor[i].current_p_pgain = 0.0;
-        motor[i].current_p_igain = 0.0;
-        motor[i].current_p_dgain = 0.0;
-      }
-    }
-    motor[i].now_speed_target = 0.0;
-    motor[i].different_sum = 0.0;
-    motor[i].low_pass_different_sum = 0.0;
-    motor[i].last_difference = 0.0;
-    motor[i].last_input = 0.0;
-    motor[i].low_pass_derivative = 0.0;
-    motor[i].last_last_difference = 0.0;
-    motor[i].current_d = 0.0;
-    motor[i].current_p = 0.0;
-    motor[i].current_d_target = 0.0;
-    motor[i].current_p_target = 0.0;
-    motor[i].current_d_different_sum = 0.0;
-    motor[i].current_d_low_pass_different_sum = 0.0;
-    motor[i].current_d_last_difference = 0.0;      //currentは電流といういみ　現在ではない
-    motor[i].current_p_different_sum = 0.0;
-    motor[i].current_p_low_pass_different_sum = 0.0;
-    motor[i].current_p_last_difference = 0.0; 
-  }  
-  cutoff = 8;
-  HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
-  //エンコーダ―起動
-  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-  // WAKEピンでドライバ起動
-  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
-  HAL_Delay(100);
 
-  HAL_Delay(5);
-  stspin_clear_faults();
-  HAL_Delay(5);
-  stspin_clear_faults();   // 念のため2回
-
-  // PWM出力開始
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
-
-  //ADCキャリブレーション＆スタート
-  HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
-
-  // OPAMPスタート
-  HAL_OPAMP_Start(&hopamp1);
-  HAL_OPAMP_Start(&hopamp2);
-  HAL_OPAMP_Start(&hopamp3);
-
-  HAL_Delay(2);
-
-  //ADCキャリブレーション＆スタート
-  // まずITなしでオフセット計測 オフセットを正確に行うため
-  HAL_ADCEx_InjectedStart(&hadc1);
-  HAL_ADCEx_InjectedStart(&hadc2);
-
-  /*offsetを計算するための変数*/
-  uint32_t sum_u = 0.0;
-  uint32_t sum_v = 0.0;
-  uint32_t sum_w = 0.0;
-
-  for (int i = 0; i < 100; i++) {
-    HAL_Delay(1); // 少し待ってからADCのInjected変換結果を取得
-    sum_u += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
-    sum_v += HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
-    sum_w += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
-  }
-
-  offset_u = sum_u / 100;
-  offset_v = sum_v / 100;
-  offset_w = sum_w / 100;
-
-  printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
-
-  // オフセット計測後にIT版に切り替え ここから割り込みを行うことでoffsetにノイズがのることを防ぐ
-  HAL_ADCEx_InjectedStop(&hadc1);
-  HAL_ADCEx_InjectedStop(&hadc2);
-  HAL_ADCEx_InjectedStart_IT(&hadc1);
-  HAL_ADCEx_InjectedStart_IT(&hadc2);
-
-  //FCO処理
-  set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
-  HAL_Delay(500);             // 1秒待って完全に静止させる
-  // その位置を「ゼロ点ズレ」として記憶
-  zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
-  set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
-
-  // TIM2でコントロールループ開始（割り込み）
-  HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
-  HAL_NVIC_EnableIRQ(TIM2_IRQn);
-
-  HAL_TIM_Base_Start_IT(&htim2);
-  setvbuf(stdout, NULL, _IONBF, 0);
-  printf("boot\r\n");
-  //uint16_t prev_angle_raw = as5047p_read_angle();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t fault_check_cnt = 0;
-    if (++fault_check_cnt >= 5) {   // 200ms×5=1秒ごとくらいでもOK。もっと頻繁でも良い
-        fault_check_cnt = 0;
-        uint8_t st = stspin_clear_faults();
-        if (st & 0x04) {
-            printf("VDS protection tripped! cleared.\r\n");
-        }
-        if (st & 0x08) {
-            printf("Device RESET detected! cleared.\r\n");
-        }
-    }
-
-    
-    fflush(stdout);
-    HAL_Delay(200);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -993,19 +846,19 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE END FDCAN1_Init 1 */
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
-  hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
+  hfdcan1.Init.FrameFormat = FDCAN_FRAME_FD_BRS;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
   hfdcan1.Init.AutoRetransmission = DISABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 16;
+  hfdcan1.Init.NominalPrescaler = 8;
   hfdcan1.Init.NominalSyncJumpWidth = 1;
-  hfdcan1.Init.NominalTimeSeg1 = 1;
-  hfdcan1.Init.NominalTimeSeg2 = 1;
-  hfdcan1.Init.DataPrescaler = 1;
+  hfdcan1.Init.NominalTimeSeg1 = 15;
+  hfdcan1.Init.NominalTimeSeg2 = 4;
+  hfdcan1.Init.DataPrescaler = 2;
   hfdcan1.Init.DataSyncJumpWidth = 1;
-  hfdcan1.Init.DataTimeSeg1 = 1;
-  hfdcan1.Init.DataTimeSeg2 = 1;
+  hfdcan1.Init.DataTimeSeg1 = 15;
+  hfdcan1.Init.DataTimeSeg2 = 4;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
