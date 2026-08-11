@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -135,6 +136,9 @@ static inline float fast_cos(float x) { return cosf(x); }
 
 volatile int pid_mode[3] = {0, 0, 0};   //0ならlocate_pid 1ならspeed_pid
 volatile int control_motor_mode[3] = {0, 0, 0};       //モーターの制御モード
+
+volatile uint32_t rx_ok_count = 0;
+static volatile uint32_t tim2_cnt = 0;
 
 /*電流値　単位はアンペア*/
 volatile float current_u = 0.0f;
@@ -254,6 +258,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     motor[idx].speed_target       = cmd.speed_target;
     pid_mode[idx]                 = cmd.pid_mode ? 1 : 0;
     control_motor_mode[idx]       = cmd.control_motor_mode ? 1 : 0;
+
+    rx_ok_count++;
 }
 
 static uint16_t spi_transfer_16(uint16_t tx)
@@ -380,6 +386,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     
     if (htim->Instance == TIM2)
     {
+        tim2_cnt++;
         /*意味ないここから(この部分があるからとはいえプログラムに変化はない)*/
         static uint32_t cnt = 0;
         
@@ -589,9 +596,10 @@ int main(void)
   MX_TIM8_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=500.0;
+    motor[i].speed_target=0.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -646,6 +654,10 @@ int main(void)
     motor[i].current_p_last_difference = 0.0; 
   }  
   cutoff = 8;
+
+  printf("step2: motor struct init done\r\n");
+
+
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
   //エンコーダ―起動
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
@@ -653,10 +665,14 @@ int main(void)
   HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET);
   HAL_Delay(100);
 
+  printf("step3: encoder + WAKE done\r\n");
+
   HAL_Delay(5);
   stspin_clear_faults();
   HAL_Delay(5);
   stspin_clear_faults();   // 念のため2回
+
+  printf("step4: stspin faults cleared\r\n");
 
   // PWM出力開始
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -666,9 +682,13 @@ int main(void)
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 
+  printf("step5: PWM started\r\n");
+
   //ADCキャリブレーション＆スタート
   HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
   HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+
+  printf("step6: ADC calibrated\r\n");
 
   // OPAMPスタート
   HAL_OPAMP_Start(&hopamp1);
@@ -677,10 +697,14 @@ int main(void)
 
   HAL_Delay(2);
 
+  printf("step7: OPAMP started\r\n");
+
   //ADCキャリブレーション＆スタート
   // まずITなしでオフセット計測 オフセットを正確に行うため
   HAL_ADCEx_InjectedStart(&hadc1);
   HAL_ADCEx_InjectedStart(&hadc2);
+
+  printf("step8: injected ADC started\r\n");
 
   /*offsetを計算するための変数*/
   uint32_t sum_u = 0.0;
@@ -699,12 +723,15 @@ int main(void)
   offset_w = sum_w / 100;
 
   printf("Offset U:%lu, V:%lu, W:%lu\r\n", offset_u, offset_v, offset_w);
+  printf("step9: offset measured U:%lu V:%lu W:%lu\r\n", offset_u, offset_v, offset_w);
 
   // オフセット計測後にIT版に切り替え ここから割り込みを行うことでoffsetにノイズがのることを防ぐ
   HAL_ADCEx_InjectedStop(&hadc1);
   HAL_ADCEx_InjectedStop(&hadc2);
   HAL_ADCEx_InjectedStart_IT(&hadc1);
   HAL_ADCEx_InjectedStart_IT(&hadc2);
+
+  printf("step10: injected IT started\r\n");
 
   //FCO処理
   set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
@@ -713,13 +740,19 @@ int main(void)
   zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
   set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
 
+  printf("step11: FCO lock done, zero_offset_rad=%d\r\n", (int)(zero_offset_rad*1000));
+
   // TIM2でコントロールループ開始（割り込み）
   HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM2_IRQn);
 
+  HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(TIM2_IRQn, 2, 0);
+
   HAL_TIM_Base_Start_IT(&htim2);
   setvbuf(stdout, NULL, _IONBF, 0);
   printf("boot\r\n");
+  printf("boot: control loop started\r\n");
   //uint16_t prev_angle_raw = as5047p_read_angle();
   /* USER CODE END 2 */
 
@@ -775,6 +808,24 @@ int main(void)
     // (int)(current_w * 1000000));
     // fflush(stdout);
     // HAL_Delay(200);
+    if (++fault_check_cnt >= 5) {
+        fault_check_cnt = 0;
+        uint8_t st = stspin_clear_faults();
+        if (st & 0x04) printf("VDS protection tripped! cleared.\r\n");
+        if (st & 0x08) printf("Device RESET detected! cleared.\r\n");
+    }
+
+    /* ★ 追加: CAN受信状況を表示 */
+    FDCAN_ProtocolStatusTypeDef pstatus;
+    FDCAN_ErrorCountersTypeDef  ecounters;
+    HAL_FDCAN_GetProtocolStatus(&hfdcan1, &pstatus);
+    HAL_FDCAN_GetErrorCounters(&hfdcan1, &ecounters);
+    printf("rx_ok=%lu BusOff=%d ErrPassive=%d TEC=%lu REC=%lu target=%d tim2_cnt=%d pid_mode=%d ctrl_mode=%d speed=%d angle=%u\r\n",
+       rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
+       (unsigned long)ecounters.TxErrorCnt, (unsigned long)ecounters.RxErrorCnt,
+       (int)motor[0].speed_target, tim2_cnt,
+       pid_mode[0], control_motor_mode[0],
+       (int)motor[0].speed, angle_raw);
   }
   /* USER CODE END 3 */
 }
@@ -1001,14 +1052,14 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.AutoRetransmission = DISABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 16;
+  hfdcan1.Init.NominalPrescaler = 8;
   hfdcan1.Init.NominalSyncJumpWidth = 1;
-  hfdcan1.Init.NominalTimeSeg1 = 1;
-  hfdcan1.Init.NominalTimeSeg2 = 1;
-  hfdcan1.Init.DataPrescaler = 1;
+  hfdcan1.Init.NominalTimeSeg1 = 15;
+  hfdcan1.Init.NominalTimeSeg2 = 4;
+  hfdcan1.Init.DataPrescaler = 2;
   hfdcan1.Init.DataSyncJumpWidth = 1;
-  hfdcan1.Init.DataTimeSeg1 = 1;
-  hfdcan1.Init.DataTimeSeg2 = 1;
+  hfdcan1.Init.DataTimeSeg1 = 15;
+  hfdcan1.Init.DataTimeSeg2 = 4;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
