@@ -408,6 +408,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
           }
 
         }
+        else if (motor[0].now_speed_target > motor[0].speed_target) {
+          motor[0].now_speed_target -= 0.05f;
+          if (motor[0].now_speed_target < motor[0].speed_target) {
+            motor[0].now_speed_target = motor[0].speed_target;
+          }
+        }
+        
         float voltage_out = 0.0f;  // ← スコープを外に出す
 
         if (pid_mode[0] == 0) {
