@@ -217,7 +217,7 @@ static void FDCAN1_ConfigFilterAndStart(void);
 
 void apply_single_wheel_control(float vx, float vy, float omega)
 {
-    float target_speed = get_branch_target_speed(vx, vy, omega, WHEEL_A);  // motor1 branch
+    float target_speed = get_branch_target_speed(vx, vy, omega, WHEEL_B);  // motor1 branch
     motor[0].speed_target = target_speed;
 }
 
