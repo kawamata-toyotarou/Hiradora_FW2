@@ -193,6 +193,14 @@ static void FDCAN1_ConfigFilterAndStart(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static void omni_to_wheels(float vx, float vy, float omega, float R,
+                          float *va, float *vb, float *vc)
+{
+    *va = -0.86602540378f * vx - 0.5f * vy - omega * R;
+    *vb =  1.0f * vy - omega * R;
+    *vc =  0.86602540378f * vx - 0.5f * vy - omega * R;
+}
+
 static void FDCAN1_ConfigFilterAndStart(void)
 {
     FDCAN_FilterTypeDef sFilterConfig;
