@@ -154,7 +154,6 @@ uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
 #define CAN_MOTOR_CMD_BASE_ID  0x100u
-#define CAN_MOTOR_NUM          3u
 
 typedef struct __attribute__((packed)) {
     float   speed_target;         /* byte0-3 */
@@ -201,10 +200,10 @@ static void FDCAN1_ConfigFilterAndStart(void)
     /* 0x100〜0x102 の標準IDだけをRXFIFO0に通す */
     sFilterConfig.IdType       = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex  = 0;
-    sFilterConfig.FilterType   = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterType   = FDCAN_FILTER_DUAL;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     sFilterConfig.FilterID1    = CAN_MOTOR_CMD_BASE_ID;
-    sFilterConfig.FilterID2    = CAN_MOTOR_CMD_BASE_ID + (CAN_MOTOR_NUM - 1);
+    sFilterConfig.FilterID2    = CAN_MOTOR_CMD_BASE_ID ;
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
     {
         Error_Handler();
@@ -242,22 +241,17 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
     if (RxHeader.IdType != FDCAN_STANDARD_ID) return;
     if (RxHeader.DataLength != FDCAN_DLC_BYTES_8) return;
-
-    uint32_t id = RxHeader.Identifier;
-    if (id < CAN_MOTOR_CMD_BASE_ID || id >= CAN_MOTOR_CMD_BASE_ID + CAN_MOTOR_NUM) return;
-
-    uint32_t idx = id - CAN_MOTOR_CMD_BASE_ID;
+    if (RxHeader.Identifier != MOTOR_CAN_ID) return;   // 自分宛てのIDでなければ無視
 
     can_motor_cmd_t cmd;
     memcpy(&cmd, RxData, sizeof(cmd));
 
-    /* 範囲外の値でモーターが暴走しないよう軽くクリップ */
     if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
     if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
 
-    motor[idx].speed_target       = cmd.speed_target;
-    pid_mode[idx]                 = cmd.pid_mode ? 1 : 0;
-    control_motor_mode[idx]       = cmd.control_motor_mode ? 1 : 0;
+    motor[0].speed_target   = cmd.speed_target;
+    pid_mode[0]             = cmd.pid_mode ? 1 : 0;
+    control_motor_mode[0]   = cmd.control_motor_mode ? 1 : 0;
 
     rx_ok_count++;
 }
