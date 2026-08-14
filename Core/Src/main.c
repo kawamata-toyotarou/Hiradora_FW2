@@ -162,6 +162,28 @@ typedef struct __attribute__((packed)) {
     uint8_t reserved[2];          /* byte6-7 */
 } can_motor_cmd_t;
 
+#define WHEEL_RADIUS 0.075f
+
+typedef enum {
+    WHEEL_A = 0,
+    WHEEL_B = 1,
+    WHEEL_C = 2
+} wheel_id_t;
+
+static float get_branch_target_speed(float vx, float vy, float omega, wheel_id_t id)
+{
+    float va, vb, vc;
+
+    omni_to_wheels(vx, vy, omega, WHEEL_RADIUS, &va, &vb, &vc);
+
+    switch (id) {
+        case WHEEL_A: return va;
+        case WHEEL_B: return vb;
+        case WHEEL_C: return vc;
+        default: return 0.0f;
+    }
+}
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
