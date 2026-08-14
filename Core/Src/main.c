@@ -146,14 +146,14 @@ volatile float current_v = 0.0f;
 volatile float current_w = 0.0f;
 
 //現在の速度を計算する？ための関数
-volatile float speed_now = 0;
+volatile float speed_now = 0; //
 
 /*実際にADCで読み取った値*/
 uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x100u
+#define CAN_MOTOR_CMD_BASE_ID  0x101u
 
 typedef struct __attribute__((packed)) {
     float   speed_target;         /* byte0-3 */
