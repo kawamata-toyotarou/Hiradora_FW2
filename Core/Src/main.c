@@ -153,7 +153,7 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x100u
+#define CAN_MOTOR_CMD_BASE_ID  0x102u
 
 typedef struct __attribute__((packed)) {
     float   speed_target;         /* byte0-3 */
