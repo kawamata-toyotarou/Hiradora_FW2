@@ -215,6 +215,12 @@ static void FDCAN1_ConfigFilterAndStart(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+void apply_single_wheel_control(float vx, float vy, float omega)
+{
+    float target_speed = get_branch_target_speed(vx, vy, omega, WHEEL_A);  // motor1 branch
+    motor[0].speed_target = target_speed;
+}
+
 static void omni_to_wheels(float vx, float vy, float omega, float R,
                           float *va, float *vb, float *vc)
 {
