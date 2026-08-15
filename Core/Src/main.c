@@ -156,11 +156,12 @@ uint32_t offset_w = 2048;
 #define CAN_MOTOR_CMD_BASE_ID  0x100u
 
 typedef struct __attribute__((packed)) {
-    float   speed_target;         /* byte0-3 */
-    uint8_t pid_mode;             /* byte4: 0=locate_pid, 1=speed_pid */
-    uint8_t control_motor_mode;   /* byte5: 0=電圧制御, 1=電流制御 */
-    uint8_t reserved[2];          /* byte6-7 */
-} can_motor_cmd_t;
+    int16_t vx_mm_s;     /* byte0-1 */
+    int16_t vy_mm_s;     /* byte2-3 */
+    int16_t omega_mrad;  /* byte4-5 */
+    uint8_t pid_mode;         /* byte6 */
+    uint8_t control_motor_mode; /* byte7 */
+} can_motor_cmd_t;   
 
 #define WHEEL_RADIUS 0.075f
 
@@ -169,20 +170,6 @@ typedef enum {
     WHEEL_B = 1,
     WHEEL_C = 2
 } wheel_id_t;
-
-static float get_branch_target_speed(float vx, float vy, float omega, wheel_id_t id)
-{
-    float va, vb, vc;
-
-    omni_to_wheels(vx, vy, omega, WHEEL_RADIUS, &va, &vb, &vc);
-
-    switch (id) {
-        case WHEEL_A: return va;
-        case WHEEL_B: return vb;
-        case WHEEL_C: return vc;
-        default: return 0.0f;
-    }
-}
 
 /* USER CODE END PV */
 
@@ -210,16 +197,14 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff);
 void measure_current(void);
 static void FDCAN1_ConfigFilterAndStart(void);
+static void omni_to_wheels(float vx, float vy, float omega, float R,
+                          float *va, float *vb, float *vc);
+static float get_branch_target_speed(float vx, float vy, float omega, wheel_id_t id);
+void apply_single_wheel_control(float vx, float vy, float omega);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-void apply_single_wheel_control(float vx, float vy, float omega)
-{
-    float target_speed = get_branch_target_speed(vx, vy, omega, WHEEL_A);  // motor1 branch
-    motor[0].speed_target = target_speed;
-}
 
 static void omni_to_wheels(float vx, float vy, float omega, float R,
                           float *va, float *vb, float *vc)
@@ -227,6 +212,26 @@ static void omni_to_wheels(float vx, float vy, float omega, float R,
     *va = -0.86602540378f * vx - 0.5f * vy - omega * R;
     *vb =  1.0f * vy - omega * R;
     *vc =  0.86602540378f * vx - 0.5f * vy - omega * R;
+}
+
+static float get_branch_target_speed(float vx, float vy, float omega, wheel_id_t id)
+{
+    float va, vb, vc;
+
+    omni_to_wheels(vx, vy, omega, WHEEL_RADIUS, &va, &vb, &vc);
+
+    switch (id) {
+        case WHEEL_A: return va;
+        case WHEEL_B: return vb;
+        case WHEEL_C: return vc;
+        default: return 0.0f;
+    }
+}
+
+void apply_single_wheel_control(float vx, float vy, float omega)
+{
+    float target_speed = get_branch_target_speed(vx, vy, omega, WHEEL_A);  // motor1 branch
+    motor[0].speed_target = target_speed;
 }
 
 static void FDCAN1_ConfigFilterAndStart(void)
@@ -277,17 +282,20 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
     if (RxHeader.IdType != FDCAN_STANDARD_ID) return;
     if (RxHeader.DataLength != FDCAN_DLC_BYTES_8) return;
-    if (RxHeader.Identifier != MOTOR_CAN_ID) return;   // 自分宛てのIDでなければ無視
+    if (RxHeader.Identifier != CAN_MOTOR_CMD_BASE_ID) return;   // 自分宛てのIDでなければ無視
 
     can_motor_cmd_t cmd;
     memcpy(&cmd, RxData, sizeof(cmd));
 
-    if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
-    if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
+    /* int16の量子化値をfloatの物理量に戻す */
+    float vx    = (float)cmd.vx_mm_s    / 1000.0f;  // mm/s -> m/s
+    float vy    = (float)cmd.vy_mm_s    / 1000.0f;  // mm/s -> m/s
+    float omega = (float)cmd.omega_mrad / 1000.0f;  // mrad/s -> rad/s
 
-    motor[0].speed_target   = cmd.speed_target;
     pid_mode[0]             = cmd.pid_mode ? 1 : 0;
     control_motor_mode[0]   = cmd.control_motor_mode ? 1 : 0;
+
+    apply_single_wheel_control(vx, vy, omega);   // ここでオムニ変換してmotor[0].speed_targetに反映
 
     rx_ok_count++;
 }
