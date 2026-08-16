@@ -201,6 +201,11 @@ static void omni_to_wheels(float vx, float vy, float omega, float R,
                           float *va, float *vb, float *vc);
 static float get_branch_target_speed(float vx, float vy, float omega, wheel_id_t id);
 void apply_single_wheel_control(float vx, float vy, float omega);
+static float detect_rotation_direction(void);
+void set_pwm(float ua, float ub, float uc);          
+uint16_t as5047p_read_angle(void); 
+static void forced_com(int state); 
+static void forced_commutation_apply(float elec_angle, float voltage);                  
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -236,7 +241,44 @@ void apply_single_wheel_control(float vx, float vy, float omega)
     if (target_speed > 5000.0f)  target_speed = 5000.0f;
     if (target_speed < -5000.0f) target_speed = -5000.0f;
 
-    motor[0].speed_target = target_speed;
+    motor[0].speed_target = 500;//target_speed;
+}
+
+static float detect_rotation_direction(void)
+{
+    const float test_voltage = 0.0300f;    // ★この人のduty差スケールに合わせる
+    const float elec_speed = 2.0f * M_PI;  // rad/s (電気角)
+    const float dt = 0.002f;
+    const int   duration_ms = 1000;
+
+    uint16_t angle_before = as5047p_read_angle();
+
+    float test_dir = 0.0f;
+
+    // 電圧を0からtest_voltageまで滑らかに立ち上げる
+    for (float v = 0.0f; v < test_voltage; v += 0.0005f) {
+        forced_commutation_apply(test_dir, v);
+        HAL_Delay(1);
+    }
+
+    int steps = duration_ms / (int)(dt * 1000);
+    for (int i = 0; i < steps; i++) {
+        test_dir += elec_speed * dt;
+        if (test_dir > 2.0f * M_PI) test_dir -= 2.0f * M_PI;
+        forced_commutation_apply(test_dir, test_voltage);
+        HAL_Delay((int)(dt * 1000));
+    }
+
+    HAL_Delay(100);
+    uint16_t angle_after = as5047p_read_angle();
+    set_pwm(0.5f, 0.5f, 0.5f);
+    HAL_Delay(100);
+
+    int16_t diff = (int16_t)angle_after - (int16_t)angle_before;
+    if (diff > 8192)  diff -= 16384;
+    if (diff < -8192) diff += 16384;
+
+    return (diff >= 0) ? 1.0f : -1.0f;
 }
 
 static void FDCAN1_ConfigFilterAndStart(void)
@@ -353,6 +395,7 @@ static float electrical_direction = 0.0f;
 static float step_move = 0.01f;      //使っていないが残している
 static float amp = 0.05f;           // 出力の大きさを調整できる
 static float zero_offset_rad = 0.0f;  //初期位置のずれを確認する
+static float motor_direction = 1.0f;
 
 /*while表示用*/
 uint16_t diag;
@@ -380,7 +423,6 @@ void update_openloop(float voltage)
 
     float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;  //360度の角度に変更
     //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
-    static float motor_direction = 1.0f; 
     
     electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
     
@@ -444,7 +486,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
         if (motor[0].now_speed_target < motor[0].speed_target) {
 
-          motor[0].now_speed_target += 0.05f;
+          motor[0].now_speed_target += 0.5f;
 
           if (motor[0].now_speed_target > motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
@@ -452,7 +494,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
         }
         else if (motor[0].now_speed_target > motor[0].speed_target) {
-          motor[0].now_speed_target -= 0.05f;
+          motor[0].now_speed_target -= 0.5f;
           if (motor[0].now_speed_target < motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
           }
@@ -586,6 +628,7 @@ void measure_current(void) {
   float i_alpha = current_u;
   float i_beta  = (current_u + 2.0f * current_v) * 0.57735f; // 1/sqrt(3)
 
+
   float id =  i_alpha * fast_cos(electrical_direction) + i_beta * fast_sin(electrical_direction);
   float iq = -i_alpha * fast_sin(electrical_direction) + i_beta * fast_cos(electrical_direction);
 
@@ -597,6 +640,40 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance == ADC1) {  //PWMのスイッチングタイミングとADCサンプリングが同期させてノイズを減らす? よくわからない
         measure_current();
+    }
+}
+
+static void forced_commutation_apply(float elec_angle, float voltage)
+{
+    float vd = 0.0f;
+    float vq = voltage;
+
+    float va = vd * fast_cos(elec_angle) - vq * fast_sin(elec_angle);
+    float vb = vd * fast_sin(elec_angle) + vq * fast_cos(elec_angle);
+
+    float u = va;
+    float v = -0.5f * va + 0.866f * vb;
+    float w = -0.5f * va - 0.866f * vb;
+
+    float offset = 0.5f;
+    set_pwm(u + offset, v + offset, w + offset);
+}
+
+// この人のforced_com()と同じ考え方: 振幅を極小(デューティ差0.0125)に固定した6ステップ強制転流
+static void forced_com(int state)
+{
+    const float on_duty   = 0.5300f;   // 中心0.5から+0.0125
+    const float off_duty  = 0.4700f;   // 中心0.5から-0.0125
+    const float free_duty = 0.5f;      // 中心のまま(このステップでは駆動しない相)
+
+    switch (state) {
+        case 1: set_pwm(on_duty,  off_duty, free_duty); break;
+        case 2: set_pwm(on_duty,  free_duty, off_duty); break;
+        case 3: set_pwm(free_duty, on_duty,  off_duty); break;
+        case 4: set_pwm(off_duty, on_duty,  free_duty); break;
+        case 5: set_pwm(off_duty, free_duty, on_duty ); break;
+        case 6: set_pwm(free_duty, off_duty, on_duty ); break;
+        default: break;
     }
 }
 /* USER CODE END 0 */
@@ -649,7 +726,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=0.0;
+    motor[i].speed_target=500.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -783,12 +860,34 @@ int main(void)
 
   printf("step10: injected IT started\r\n");
 
-  //FCO処理
-  set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
-  HAL_Delay(500);             // 1秒待って完全に静止させる
-  // その位置を「ゼロ点ズレ」として記憶
-  zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
-  set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
+  
+  //FCO処理（1回目：ロックするだけ。まだzero_offset_radは測らない）
+  {
+    const float lock_voltage = 0.030f;
+    float fixed_angle = 0.0f;
+    for (float v = 0.0f; v < lock_voltage; v += 0.0005f) {
+        forced_commutation_apply(fixed_angle, v);
+        HAL_Delay(1);
+    }
+    forced_commutation_apply(fixed_angle, lock_voltage);
+    HAL_Delay(100);
+  }
+  // 方向検出（この中でロータが動くので、まだゼロ点は確定させない）
+  motor_direction = detect_rotation_direction();
+  printf("step11.5: motor_direction=%d\r\n", (int)motor_direction);
+
+  // ★方向検出後に再度ロックし直し、実際の位置でゼロ点を確定させる
+  {
+    const float lock_voltage = 0.030f;
+    float fixed_angle = 0.0f;
+    for (float v = 0.0f; v < lock_voltage; v += 0.0005f) {
+        forced_commutation_apply(fixed_angle, v);
+        HAL_Delay(1);
+    }
+    forced_commutation_apply(fixed_angle, lock_voltage);
+    HAL_Delay(100);
+  }
+  zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI;
 
   printf("step11: FCO lock done, zero_offset_rad=%d\r\n", (int)(zero_offset_rad*1000));
 
