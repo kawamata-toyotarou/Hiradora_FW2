@@ -287,6 +287,7 @@ int _write(int file, char *ptr, int len)
   (void)file;
   HAL_UART_Transmit(&huart1, (uint8_t*)ptr, (uint16_t)len, HAL_MAX_DELAY);
   return len;
+
 }
 
 void set_pwm(float ua, float ub, float uc)
@@ -320,27 +321,32 @@ int32_t speed_rpm_int;
 
 void update_openloop(float voltage)
 {
+    
     static uint16_t prev_angle_raw = 0;
-    static float filtered_speed = 0.0;  //cutoffはd項のfilter これは全体の出力filter
+    static float filtered_speed = 0.0;
+    static int speed_calc_cnt = 0;
+    static uint16_t angle_at_last_calc = 0;
+
     angle_raw = as5047p_read_angle();
-    
-    /*一回転した時の処理*/
-    int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
-    if (diff > 8192)  diff -= 16384;
-    if (diff < -8192) diff += 16384;
-    prev_angle_raw = angle_raw;
 
-    /*速度関連*/
-    speed_now = ((float)diff / 16384.0f) / clock_time * 60.0f; //rpmの計算
-    filtered_speed = filtered_speed * 0.7 + speed_now * 0.3;
-    motor[0].speed = filtered_speed;
-
-    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;  //360度の角度に変更
-    //electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS;
-    static float motor_direction = 1.0f; 
-    
+    float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
+    static float motor_direction = 1.0f;
     electrical_direction = (angle_mech - zero_offset_rad) * POLE_PAIRS * motor_direction;
-    
+
+    // 速度計算は25回に1回(5ms間隔)だけ行う
+    speed_calc_cnt++;
+    if (speed_calc_cnt >= 25) {
+        speed_calc_cnt = 0;
+        int16_t diff = (int16_t)angle_raw - (int16_t)angle_at_last_calc;
+        if (diff > 8192)  diff -= 16384;
+        if (diff < -8192) diff += 16384;
+        angle_at_last_calc = angle_raw;
+
+        speed_now = ((float)diff / 16384.0f) / (clock_time * 25.0f) * 60.0f;
+        filtered_speed = filtered_speed * 0.7f + speed_now * 0.3f;
+        motor[0].speed = filtered_speed;
+    }
+  
     float vd;
     float vq;
     /*速度制御*/
@@ -378,7 +384,13 @@ void update_openloop(float voltage)
     electrical_direction += step_move;
     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
     /*ここまで*/
-
+    // static int dbg_cnt = 0;
+    // if (++dbg_cnt >= 50) {
+    // dbg_cnt = 0;
+    // printf("mode=%d vd=%d vq=%d elec_dir=%d enc=%u speed=%d\r\n",
+    //    control_motor_mode[0], (int)(vd*1000), (int)(vq*1000),
+    //    (int)(electrical_direction*1000), angle_raw, (int)motor[0].speed);
+    //}
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -556,6 +568,30 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
         measure_current();
     }
 }
+
+void test_openloop_spin_veryslow(void)
+{
+    static float test_angle = 0.0f;
+    float test_vq = 0.15f;
+
+    test_angle += 0.0002f; // 0.0008 → 0.0002 にさらに減速(約1/4)
+    if (test_angle > 2.0f*M_PI) test_angle -= 2.0f*M_PI;
+
+    float va = -test_vq * fast_sin(test_angle);
+    float vb =  test_vq * fast_cos(test_angle);
+    float u = va;
+    float v = -0.5f*va + 0.866f*vb;
+    float w = -0.5f*va - 0.866f*vb;
+    set_pwm(u+0.5f, v+0.5f, w+0.5f);
+
+    uint16_t enc = as5047p_read_angle();
+    static int log_cnt = 0;
+    if (++log_cnt >= 50) {
+        log_cnt = 0;
+        printf("cmd_elec=%d enc=%u\r\n", (int)(test_angle*1000), enc);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -606,7 +642,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=0.0;
+    motor[i].speed_target=300.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -614,9 +650,9 @@ int main(void)
       //motor[i].d=1.4;
       //n5065
       if(control_motor_mode[i] == 0){
-        motor[i].p=30;
-        motor[i].i=1.7;
-        motor[i].d=1.2;
+        motor[i].p=10;
+        motor[i].i=0.5;
+        motor[i].d=0.0;
       }
       if(control_motor_mode[i] == 1){
         motor[i].current_d_pgain = 0.0;
@@ -741,14 +777,35 @@ int main(void)
   printf("step10: injected IT started\r\n");
 
   //FCO処理
-  set_pwm(0.60f, 0.45f, 0.45f); // U相に電圧をかけてモータを「0度」に強制ロック
-  HAL_Delay(500);             // 1秒待って完全に静止させる
+  set_pwm(0.54f, 0.48f, 0.48f);
+  HAL_Delay(1000); // U相に電圧をかけてモータを「0度」に強制ロック
+           // 1秒待って完全に静止させる
   // その位置を「ゼロ点ズレ」として記憶
   zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
-  set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
+  // set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
+  // for (int step = 0; step < 20; step++) {
+  //   float test_theta = step * 0.1f; // 電気角を少しずつ進める(rad)
+  //   float test_vq = 0.15f;
+  //   float va = -test_vq * fast_sin(test_theta);
+  //   float vb =  test_vq * fast_cos(test_theta);
+  //   float u = va, v = -0.5f*va+0.866f*vb, w = -0.5f*va-0.866f*vb;
+  //   set_pwm(u+0.5f, v+0.5f, w+0.5f);
+  //   HAL_Delay(300);
+  //   uint16_t enc = as5047p_read_angle();
+  //   printf("test_theta=%d enc=%u\r\n", (int)(test_theta*1000), enc);
+  // }
 
   printf("step11: FCO lock done, zero_offset_rad=%d\r\n", (int)(zero_offset_rad*1000));
 
+  uint16_t angle_before = as5047p_read_angle();
+  HAL_Delay(200);
+  uint16_t angle_after = as5047p_read_angle();
+  int16_t diff = (int16_t)angle_after - (int16_t)angle_before;
+  if (diff > 8192) diff -= 16384;
+  if (diff < -8192) diff += 16384;
+  if (abs(diff) > 50) { // ロック後も動いている＝ロック失敗
+    printf("WARNING: FCO lock unstable! diff=%d\r\n", diff);
+  }
   // TIM2でコントロールループ開始（割り込み）
   HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM2_IRQn);
