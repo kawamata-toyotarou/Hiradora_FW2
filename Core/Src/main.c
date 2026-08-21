@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-
+#include <stdlib.h> 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,7 +66,14 @@ volatile int cutoff;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define CALIB_FLASH_ADDR   0x0801F800u
+#define CALIB_MAGIC        0xCA11B0A1u
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    float    zero_offset_rad;
+    uint32_t crc;
+} calib_data_t;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -191,6 +198,8 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff);
 void measure_current(void);
 static void FDCAN1_ConfigFilterAndStart(void);
+static int calib_load(float *zero_offset_rad_out);
+static HAL_StatusTypeDef calib_save(float zero_offset_rad_val);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -602,6 +611,64 @@ void test_openloop_spin_veryslow(void)
     // }
 }
 
+static uint32_t calib_simple_crc(uint32_t magic, float val)
+{
+    uint32_t v;
+    memcpy(&v, &val, sizeof(v));
+    return magic ^ v ^ 0xA5A5A5A5u;
+}
+
+static int calib_load(float *zero_offset_rad_out)
+{
+    const calib_data_t *stored = (const calib_data_t *)CALIB_FLASH_ADDR;
+
+    if (stored->magic != CALIB_MAGIC) {
+        return 0;
+    }
+    uint32_t expect_crc = calib_simple_crc(stored->magic, stored->zero_offset_rad);
+    if (stored->crc != expect_crc) {
+        return 0;
+    }
+
+    *zero_offset_rad_out = stored->zero_offset_rad;
+    return 1;
+}
+
+static HAL_StatusTypeDef calib_save(float zero_offset_rad_val)
+{
+    calib_data_t data;
+    data.magic = CALIB_MAGIC;
+    data.zero_offset_rad = zero_offset_rad_val;
+    data.crc = calib_simple_crc(data.magic, data.zero_offset_rad);
+
+    HAL_FLASH_Unlock();
+
+    FLASH_EraseInitTypeDef erase = {0};
+    uint32_t page_error = 0;
+    erase.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase.Banks     = FLASH_BANK_1;
+    erase.Page      = (CALIB_FLASH_ADDR - FLASH_BASE) / FLASH_PAGE_SIZE;
+    erase.NbPages   = 1;
+
+    HAL_StatusTypeDef st = HAL_FLASHEx_Erase(&erase, &page_error);
+    if (st != HAL_OK) {
+        HAL_FLASH_Lock();
+        return st;
+    }
+
+    uint64_t buf[2] = {0};
+    memcpy(buf, &data, sizeof(data));   // 12byte分をコピー、残りは0埋め
+
+    uint32_t addr = CALIB_FLASH_ADDR;
+    for (int i = 0; i < 2; i++) {
+        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr + i * 8, buf[i]);
+        if (st != HAL_OK) break;
+    }
+
+    HAL_FLASH_Lock();
+    return st;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -787,34 +854,36 @@ int main(void)
   printf("step10: injected IT started\r\n");
 
   //FCO処理
-  set_pwm(0.58f, 0.46f, 0.46f);
-  HAL_Delay(1000); // U相に電圧をかけてモータを「0度」に強制ロック
-           // 1秒待って完全に静止させる
-  // その位置を「ゼロ点ズレ」として記憶
-  zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI; 
-  // set_pwm(0.5f, 0.5f, 0.5f);   // ロック解除
-  // for (int step = 0; step < 20; step++) {
-  //   float test_theta = step * 0.1f; // 電気角を少しずつ進める(rad)
-  //   float test_vq = 0.15f;
-  //   float va = -test_vq * fast_sin(test_theta);
-  //   float vb =  test_vq * fast_cos(test_theta);
-  //   float u = va, v = -0.5f*va+0.866f*vb, w = -0.5f*va-0.866f*vb;
-  //   set_pwm(u+0.5f, v+0.5f, w+0.5f);
-  //   HAL_Delay(300);
-  //   uint16_t enc = as5047p_read_angle();
-  //   printf("test_theta=%d enc=%u\r\n", (int)(test_theta*1000), enc);
-  // }
+  float loaded_zero_offset;
+  if (calib_load(&loaded_zero_offset)) {
+      zero_offset_rad = loaded_zero_offset;
+      printf("step11: calibration loaded from flash, zero_offset_rad=%d\r\n",
+             (int)(zero_offset_rad * 1000));
+  } else {
+      set_pwm(0.58f, 0.46f, 0.46f);
+      HAL_Delay(1000); // U相に電圧をかけてモータを「0度」に強制ロック
+               // 1秒待って完全に静止させる
+      // その位置を「ゼロ点ズレ」として記憶
+      zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI;
 
-  printf("step11: FCO lock done, zero_offset_rad=%d\r\n", (int)(zero_offset_rad*1000));
+      if (calib_save(zero_offset_rad) == HAL_OK) {
+          printf("step11: FCO lock done, saved to flash, zero_offset_rad=%d\r\n",
+                 (int)(zero_offset_rad * 1000));
+      } else {
+          printf("step11: FCO lock done, FLASH SAVE FAILED, zero_offset_rad=%d\r\n",
+                 (int)(zero_offset_rad * 1000));
+      }
 
-  uint16_t angle_before = as5047p_read_angle();
-  HAL_Delay(200);
-  uint16_t angle_after = as5047p_read_angle();
-  int16_t diff = (int16_t)angle_after - (int16_t)angle_before;
-  if (diff > 8192) diff -= 16384;
-  if (diff < -8192) diff += 16384;
-  if (abs(diff) > 50) { // ロック後も動いている＝ロック失敗
-    printf("WARNING: FCO lock unstable! diff=%d\r\n", diff);
+      /* ロックが実際に効いているかの確認は、ロックした場合のみ実施 */
+      uint16_t angle_before = as5047p_read_angle();
+      HAL_Delay(200);
+      uint16_t angle_after = as5047p_read_angle();
+      int16_t diff = (int16_t)angle_after - (int16_t)angle_before;
+      if (diff > 8192) diff -= 16384;
+      if (diff < -8192) diff += 16384;
+      if (abs(diff) > 50) { // ロック後も動いている＝ロック失敗
+        printf("WARNING: FCO lock unstable! diff=%d\r\n", diff);
+      }
   }
   // TIM2でコントロールループ開始（割り込み）
   HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
