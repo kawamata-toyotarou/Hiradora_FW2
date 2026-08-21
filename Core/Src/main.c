@@ -130,6 +130,7 @@ static uint8_t stspin_clear_faults(void)
 #define clock_time 0.0002    //time一回当たりの周期
 #define resistance_for_current 0.001   //電流計測に用いる抵抗値
 #define opamp_gain 16.0  //cudemxで設定したPGAgainの値
+#define MAX_PHASE_CURRENT_A   7.0f
 #define drive_voltage 3.3  //マイコンの駆動電圧
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
@@ -144,6 +145,7 @@ static volatile uint32_t tim2_cnt = 0;
 volatile float current_u = 0.0f;
 volatile float current_v = 0.0f;
 volatile float current_w = 0.0f;
+volatile uint8_t overcurrent_fault = 0;
 
 //現在の速度を計算する？ための関数
 volatile float speed_now = 0;
@@ -153,7 +155,7 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x301u
+#define CAN_MOTOR_CMD_BASE_ID  0x303u
 #define CAN_MOTOR_NUM          3u
 
 typedef struct __attribute__((packed)) {
@@ -405,6 +407,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
         /*ここまで*/
 
+        if (overcurrent_fault) {
+            return;
+        }
+
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
         if (motor[0].now_speed_target < motor[0].speed_target) {
 
@@ -535,33 +541,42 @@ float speed_pid(volatile float output, float target, float p, float i, float d, 
 
 void measure_current(void) {
 
-  // ADCのInjected変換結果  生データ: 0〜4095を取得
   uint32_t raw_u = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
-  //uint32_t raw_v = HAL_ADCEx_InjectedGetValue(&hadc2, ADC_INJECTED_RANK_1);
   uint32_t raw_w = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
 
-  float magnification_conversion = (drive_voltage / 4096.0f) / (opamp_gain * resistance_for_current);    //生データを実際の電流値にする変数と計算
+  float magnification_conversion = (drive_voltage / 4096.0f) / (opamp_gain * resistance_for_current);
 
   current_u = ((float)raw_u - (float)offset_u) * magnification_conversion;
   current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
-  current_v = -(current_u + current_w);   //キルヒホッフの法則
+  current_v = -(current_u + current_w);
+
+  /* ★ 過電流保護: 各相電流の絶対値が閾値を超えたら即座にPWM停止 */
+  if (!overcurrent_fault &&
+      (fabsf(current_u) > MAX_PHASE_CURRENT_A ||
+       fabsf(current_v) > MAX_PHASE_CURRENT_A ||
+       fabsf(current_w) > MAX_PHASE_CURRENT_A))
+  {
+      overcurrent_fault = 1;
+
+      set_pwm(0.5f, 0.5f, 0.5f);   // デューティ50%(=出力ゼロ)にしてから停止
+
+      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+  }
 
   // Clarke変換 (u,v,w → alpha,beta)
   float i_alpha = current_u;
-  float i_beta  = (current_u + 2.0f * current_v) * 0.57735f; // 1/sqrt(3)
+  float i_beta  = (current_u + 2.0f * current_v) * 0.57735f;
 
   float id =  i_alpha * fast_cos(electrical_direction) + i_beta * fast_sin(electrical_direction);
   float iq = -i_alpha * fast_sin(electrical_direction) + i_beta * fast_cos(electrical_direction);
 
   motor[0].current_d = id;
   motor[0].current_p = iq; 
-}
-
-void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-    if (hadc->Instance == ADC1) {  //PWMのスイッチングタイミングとADCサンプリングが同期させてノイズを減らす? よくわからない
-        measure_current();
-    }
 }
 
 void test_openloop_spin_veryslow(void)
@@ -645,9 +660,9 @@ int main(void)
       //motor[i].d=1.4;
       //n5065
       if(control_motor_mode[i] == 0){
-        motor[i].p=25;
-        motor[i].i=1.5;
-        motor[i].d=1.0;
+        motor[i].p=35;
+        motor[i].i=1.8;
+        motor[i].d=1.4;
       }
       if(control_motor_mode[i] == 1){
         motor[i].current_d_pgain = 0.0;
@@ -772,7 +787,7 @@ int main(void)
   printf("step10: injected IT started\r\n");
 
   //FCO処理
-  set_pwm(0.54f, 0.48f, 0.48f);
+  set_pwm(0.58f, 0.46f, 0.46f);
   HAL_Delay(1000); // U相に電圧をかけてモータを「0度」に強制ロック
            // 1秒待って完全に静止させる
   // その位置を「ゼロ点ズレ」として記憶
@@ -879,12 +894,14 @@ int main(void)
     FDCAN_ErrorCountersTypeDef  ecounters;
     HAL_FDCAN_GetProtocolStatus(&hfdcan1, &pstatus);
     HAL_FDCAN_GetErrorCounters(&hfdcan1, &ecounters);
-    printf("rx_ok=%lu BusOff=%d ErrPassive=%d TEC=%lu REC=%lu target=%d tim2_cnt=%d pid_mode=%d ctrl_mode=%d speed=%d angle=%u\r\n",
-       rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
-       (unsigned long)ecounters.TxErrorCnt, (unsigned long)ecounters.RxErrorCnt,
-       (int)motor[0].speed_target, tim2_cnt,
-       pid_mode[0], control_motor_mode[0],
-       (int)motor[0].speed, angle_raw);
+    printf("rx_ok=%lu BusOff=%d ErrPassive=%d TEC=%lu REC=%lu target=%d tim2_cnt=%d pid_mode=%d ctrl_mode=%d speed=%d angle=%u OC_FAULT=%d I_U=%d I_V=%d I_W=%d\r\n",
+   rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
+   (unsigned long)ecounters.TxErrorCnt, (unsigned long)ecounters.RxErrorCnt,
+   (int)motor[0].speed_target, tim2_cnt,
+   pid_mode[0], control_motor_mode[0],
+   (int)motor[0].speed, angle_raw,
+   overcurrent_fault,
+   (int)(current_u*1000), (int)(current_v*1000), (int)(current_w*1000));
   }
   /* USER CODE END 3 */
 }
