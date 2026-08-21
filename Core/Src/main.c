@@ -85,7 +85,7 @@ I2C_HandleTypeDef hi2c3;
 OPAMP_HandleTypeDef hopamp1;
 OPAMP_HandleTypeDef hopamp2;
 OPAMP_HandleTypeDef hopamp3;
-
+  
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_rx;
 
@@ -153,7 +153,7 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x100u
+#define CAN_MOTOR_CMD_BASE_ID  0x301u
 #define CAN_MOTOR_NUM          3u
 
 typedef struct __attribute__((packed)) {
@@ -198,13 +198,13 @@ static void FDCAN1_ConfigFilterAndStart(void)
 {
     FDCAN_FilterTypeDef sFilterConfig;
 
-    /* 0x100〜0x102 の標準IDだけをRXFIFO0に通す */
+    /* 0x301〜0x303 の標準IDだけをRXFIFO0に通す */
     sFilterConfig.IdType       = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex  = 0;
-    sFilterConfig.FilterType   = FDCAN_FILTER_RANGE;
+    sFilterConfig.FilterType   = FDCAN_FILTER_DUAL;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     sFilterConfig.FilterID1    = CAN_MOTOR_CMD_BASE_ID;
-    sFilterConfig.FilterID2    = CAN_MOTOR_CMD_BASE_ID + (CAN_MOTOR_NUM - 1);
+    sFilterConfig.FilterID2    = CAN_MOTOR_CMD_BASE_ID;
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
     {
         Error_Handler();
@@ -242,12 +242,6 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
     if (RxHeader.IdType != FDCAN_STANDARD_ID) return;
     if (RxHeader.DataLength != FDCAN_DLC_BYTES_8) return;
-
-    uint32_t id = RxHeader.Identifier;
-    if (id < CAN_MOTOR_CMD_BASE_ID || id >= CAN_MOTOR_CMD_BASE_ID + CAN_MOTOR_NUM) return;
-
-    uint32_t idx = id - CAN_MOTOR_CMD_BASE_ID;
-
     can_motor_cmd_t cmd;
     memcpy(&cmd, RxData, sizeof(cmd));
 
@@ -255,9 +249,10 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
     if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
 
-    motor[idx].speed_target       = cmd.speed_target;
-    pid_mode[idx]                 = cmd.pid_mode ? 1 : 0;
-    control_motor_mode[idx]       = cmd.control_motor_mode ? 1 : 0;
+    /* 0x301/0x302/0x303どれで来ても、この基板はmotor[0]固定 */
+    motor[0].speed_target       = cmd.speed_target;
+    pid_mode[0]                 = cmd.pid_mode ? 1 : 0;
+    control_motor_mode[0]       = cmd.control_motor_mode ? 1 : 0;
 
     rx_ok_count++;
 }
@@ -586,10 +581,10 @@ void test_openloop_spin_veryslow(void)
 
     uint16_t enc = as5047p_read_angle();
     static int log_cnt = 0;
-    if (++log_cnt >= 50) {
-        log_cnt = 0;
-        printf("cmd_elec=%d enc=%u\r\n", (int)(test_angle*1000), enc);
-    }
+    // if (++log_cnt >= 50) {
+    //     log_cnt = 0;
+    //     //printf("cmd_elec=%d enc=%u\r\n", (int)(test_angle*1000), enc);
+    // }
 }
 
 /* USER CODE END 0 */
@@ -642,7 +637,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=300.0;
+    motor[i].speed_target=0.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -650,9 +645,9 @@ int main(void)
       //motor[i].d=1.4;
       //n5065
       if(control_motor_mode[i] == 0){
-        motor[i].p=10;
-        motor[i].i=0.5;
-        motor[i].d=0.0;
+        motor[i].p=25;
+        motor[i].i=1.5;
+        motor[i].d=1.0;
       }
       if(control_motor_mode[i] == 1){
         motor[i].current_d_pgain = 0.0;
