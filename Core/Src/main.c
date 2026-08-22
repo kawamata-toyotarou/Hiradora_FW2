@@ -421,17 +421,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         }
 
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
-        if (motor[0].now_speed_target < motor[0].speed_target) {
-
-          motor[0].now_speed_target += 0.05f;
-
+        if (motor[0].speed_target == 0.0f) {
+        /* 停止指令が来たら即座に目標速度を0にする(ドリフト防止) */
+          motor[0].now_speed_target = 0.0f;
+        } else if (motor[0].now_speed_target < motor[0].speed_target) {
+          motor[0].now_speed_target += 0.5f;
           if (motor[0].now_speed_target > motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
           }
-
-        }
-        else if (motor[0].now_speed_target > motor[0].speed_target) {
-          motor[0].now_speed_target -= 0.05f;
+        } else if (motor[0].now_speed_target > motor[0].speed_target) {
+          motor[0].now_speed_target -= 0.5f;
           if (motor[0].now_speed_target < motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
           }
